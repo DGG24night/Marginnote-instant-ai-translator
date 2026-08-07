@@ -41,6 +41,13 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIAIService.test(payload.provider, payload.modelId);
   }
 
+  function fetchModels(context, payload) {
+    if (!payload || !payload.baseURL) {
+      throw new Error("缺少 baseURL 参数");
+    }
+    return MNIAIService.fetchModels(payload.baseURL, payload.apiKey);
+  }
+
   // ---------- 卡片交互 ----------
 
   function cardReady() {
@@ -91,6 +98,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     saveConfig,
     getDefaultPrompts,
     testProvider,
+    fetchModels,
     cardReady,
     closeCard,
     copyText,

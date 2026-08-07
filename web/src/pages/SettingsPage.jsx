@@ -17,6 +17,14 @@ const REASONING_OPTIONS = [
   { value: "high", label: "高" },
 ];
 
+// 设置页顶部导航标签（short 用于窄屏时的缩写）
+const SETTINGS_TABS = [
+  { id: "general", label: "常规", short: "常规" },
+  { id: "providers", label: "AI 服务提供商", short: "提供商" },
+  { id: "routing", label: "模型路由", short: "路由" },
+  { id: "prompts", label: "Prompt 模板", short: "Prompt" },
+];
+
 function Section({ title, children }) {
   return (
     <section className="section">
@@ -39,9 +47,19 @@ function Field({ label, children }) {
 
 function ProviderCard({ provider }) {
   const { update, removeProvider } = useConfigStore();
+  const [isOpen, setIsOpen] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [testingModel, setTestingModel] = useState(null);
+  const [testResult, setTestResult] = useState(null); // { modelId, ok, message }
+  const [bulkTesting, setBulkTesting] = useState(false);
+  const [bulkResults, setBulkResults] = useState({}); // { modelId: { ok, message } }
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [modelsShown, setModelsShown] = useState(false);
+  const [modelsFetching, setModelsFetching] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [modelsList, setModelsList] = useState([]);
+  const [selectedModels, setSelectedModels] = useState({});
+  const [modelQuery, setModelQuery] = useState("");
   const confirmTimerRef = useRef(null);
 
   // UIWebView 不支持 window.confirm，改为两段式确认：
@@ -62,35 +80,124 @@ function ProviderCard({ provider }) {
       if (target) mutator(target);
     });
 
-  const runTest = async () => {
-    const firstModel = provider.models[0];
-    if (!firstModel) {
-      setTestResult({ ok: false, message: "请先添加至少一个模型" });
-      return;
-    }
+  // 测试指定模型：走插件侧 MNIAIService.test（POST {baseURL}/chat/completions 最小请求）
+  const runTest = async (modelId) => {
+    if (!modelId || testing || bulkTesting) return;
     setTesting(true);
+    setTestingModel(modelId);
     setTestResult(null);
     try {
-      const result = await MNBridge.send("testProvider", {
-        provider,
-        modelId: firstModel.id,
-      });
-      setTestResult(result);
+      const result = await MNBridge.send("testProvider", { provider, modelId });
+      setTestResult({ modelId, ...result });
     } catch (error) {
-      setTestResult({ ok: false, message: String((error && error.message) || error) });
+      setTestResult({ modelId, ok: false, message: String((error && error.message) || error) });
     } finally {
       setTesting(false);
+      setTestingModel(null);
     }
   };
 
+  // 批量测试：逐个测试该供应商下所有已填 ID 的模型，结果实时写入 bulkResults
+  const runBulkTest = async () => {
+    const targets = provider.models.filter((m) => m && String(m.id).trim());
+    if (targets.length === 0 || bulkTesting) return;
+    setBulkTesting(true);
+    setBulkResults({});
+    for (const model of targets) {
+      const modelId = String(model.id).trim();
+      try {
+        const result = await MNBridge.send("testProvider", { provider, modelId });
+        setBulkResults((prev) => ({
+          ...prev,
+          [modelId]: result.ok ? { ok: true } : { ok: false, message: result.message || "连接失败" },
+        }));
+      } catch (error) {
+        setBulkResults((prev) => ({
+          ...prev,
+          [modelId]: { ok: false, message: String((error && error.message) || error) },
+        }));
+      }
+    }
+    setBulkTesting(false);
+  };
+
+  // 获取模型列表：插件侧 GET {baseURL}/models（OpenAI 兼容），再按需勾选添加
+  const fetchModels = async () => {
+    if (modelsFetching) return;
+    setModelsFetching(true);
+    setModelsError("");
+    setModelsList([]);
+    setSelectedModels({});
+    setModelQuery("");
+    setModelsShown(true);
+    try {
+      const result = await MNBridge.send("fetchModels", {
+        baseURL: provider.baseURL,
+        apiKey: provider.apiKey,
+      });
+      if (result && result.models) {
+        setModelsList(result.models);
+        if (result.models.length === 0 && result.message) {
+          setModelsError(result.message);
+        }
+      } else {
+        setModelsError((result && result.message) || "未能获取模型列表");
+      }
+    } catch (error) {
+      setModelsError(String((error && error.message) || error));
+    } finally {
+      setModelsFetching(false);
+    }
+  };
+
+  const toggleModel = (id) => {
+    setSelectedModels((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const addSelectedModels = () => {
+    const chosen = modelsList.filter((m) => selectedModels[m] && String(m).trim());
+    if (chosen.length === 0) return;
+    update((config) => {
+      const target = config.providers.find((p) => p.id === provider.id);
+      if (!target) return;
+      const existing = new Set(target.models.map((m) => m.id));
+      chosen.forEach((m) => {
+        if (!existing.has(m)) {
+          target.models.push({ id: m, supportsReasoning: false });
+          existing.add(m);
+        }
+      });
+    });
+    setModelsShown(false);
+    setModelsList([]);
+    setSelectedModels({});
+  };
+
+  const selectedCount = modelsList.filter((m) => selectedModels[m]).length;
+
+  // 搜索过滤（不区分大小写）
+  const filteredModels = modelQuery.trim()
+    ? modelsList.filter((m) => m.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+    : modelsList;
+
   return (
-    <div className="provider-card">
+    <div className={`provider-card ${isOpen ? "is-open" : ""}`}>
       <div className="provider-head">
+        <button
+          className="provider-toggle"
+          onClick={() => setIsOpen((v) => !v)}
+          aria-label={isOpen ? "收起" : "展开"}
+        >
+          <span className={`provider-caret ${isOpen ? "is-open" : ""}`}>▶</span>
+        </button>
         <input
           className="input provider-name"
           value={provider.name}
           onChange={(e) => patch((p) => { p.name = e.target.value; })}
         />
+        <span className="provider-meta">
+          {provider.models.length > 0 ? `${provider.models.length} 个模型` : "未配置模型"}
+        </span>
         <button
           className={`btn btn-danger btn-sm ${confirmingDelete ? "btn-danger-solid" : ""}`}
           onClick={handleDelete}
@@ -99,77 +206,195 @@ function ProviderCard({ provider }) {
         </button>
       </div>
 
-      <Field label="Base URL">
-        <input
-          className="input"
-          placeholder="https://api.example.com/v1"
-          value={provider.baseURL}
-          onChange={(e) => patch((p) => { p.baseURL = e.target.value; })}
-        />
-        <span className="field-hint">
-          填到 /v1 这一级即可，<b>不需要</b>填 /chat/completions（插件会自动拼接）。
-          例：https://api.deepseek.com/v1
-        </span>
-      </Field>
-
-      <Field label="API Key（仅保存在本地）">
-        <input
-          className="input"
-          type="password"
-          placeholder="sk-..."
-          value={provider.apiKey}
-          onChange={(e) => patch((p) => { p.apiKey = e.target.value; })}
-        />
-      </Field>
-
-      <div className="field">
-        <span className="field-label">模型列表</span>
-        {provider.models.map((model, index) => (
-          <div className="model-row" key={index}>
+      {isOpen && (
+        <div className="provider-body">
+          <Field label="Base URL">
             <input
               className="input"
-              placeholder="模型 ID，如 deepseek-chat"
-              value={model.id}
-              onChange={(e) =>
-                patch((p) => { p.models[index].id = e.target.value; })
-              }
+              placeholder="https://api.example.com/v1"
+              value={provider.baseURL}
+              onChange={(e) => patch((p) => { p.baseURL = e.target.value; })}
             />
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={!!model.supportsReasoning}
-                onChange={(e) =>
-                  patch((p) => { p.models[index].supportsReasoning = e.target.checked; })
-                }
-              />
-              支持推理
-            </label>
-            <button
-              className="btn btn-sm"
-              onClick={() => patch((p) => { p.models.splice(index, 1); })}
-            >
-              移除
-            </button>
-          </div>
-        ))}
-        <button
-          className="btn btn-sm"
-          onClick={() => patch((p) => { p.models.push({ id: "", supportsReasoning: false }); })}
-        >
-          + 添加模型
-        </button>
-      </div>
+            <span className="field-hint">
+              填到 /v1 这一级即可，<b>不需要</b>填 /chat/completions（插件会自动拼接）。
+              例：https://api.deepseek.com/v1
+            </span>
+          </Field>
 
-      <div className="provider-actions">
-        <button className="btn" disabled={testing} onClick={runTest}>
-          {testing ? "测试中…" : "测试连接"}
-        </button>
-        {testResult && (
-          <span className={testResult.ok ? "test-ok" : "test-fail"}>
-            {testResult.ok ? "✓ 连接成功" : `✗ ${testResult.message || "连接失败"}`}
-          </span>
-        )}
-      </div>
+          <Field label="API Key（仅保存在本地）">
+            <input
+              className="input"
+              type="password"
+              placeholder="sk-..."
+              value={provider.apiKey}
+              onChange={(e) => patch((p) => { p.apiKey = e.target.value; })}
+            />
+          </Field>
+
+          <div className="field">
+            <span className="field-label">模型列表</span>
+            {provider.models.length === 0 && (
+              <p className="field-hint">暂无模型，可手动添加或点击下方「获取模型列表」。</p>
+            )}
+            {provider.models.map((model, index) => (
+              <div className="model-row" key={index}>
+                <input
+                  className="input"
+                  placeholder="模型 ID，如 deepseek-chat"
+                  value={model.id}
+                  onChange={(e) =>
+                    patch((p) => { p.models[index].id = e.target.value; })
+                  }
+                />
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={!!model.supportsReasoning}
+                    onChange={(e) =>
+                      patch((p) => { p.models[index].supportsReasoning = e.target.checked; })
+                    }
+                  />
+                  支持推理
+                </label>
+                <button
+                  className="btn btn-sm"
+                  disabled={testing || bulkTesting}
+                  onClick={() => runTest(model.id)}
+                  title="用该模型发送最小请求验证连通性"
+                >
+                  {testing && testingModel === model.id ? "测试中…" : "测试"}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => patch((p) => { p.models.splice(index, 1); })}
+                >
+                  移除
+                </button>
+              </div>
+            ))}
+            <div className="model-toolbar">
+              <button
+                className="btn btn-sm"
+                onClick={() => patch((p) => { p.models.push({ id: "", supportsReasoning: false }); })}
+              >
+                + 添加模型
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={runBulkTest}
+                disabled={bulkTesting || provider.models.filter((m) => m && String(m.id).trim()).length === 0}
+                title="逐个测试该供应商下所有已填 ID 的模型"
+              >
+                {bulkTesting ? "批量测试中…" : "批量测试全部"}
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={fetchModels}
+                disabled={modelsFetching || !provider.baseURL.trim()}
+                title={provider.baseURL.trim() ? "从 {baseURL}/models 拉取模型列表" : "请先填写 Base URL"}
+              >
+                {modelsFetching ? "获取中…" : "获取模型列表"}
+              </button>
+            </div>
+
+            {testResult && (
+              <div className="model-test-result">
+                <span className={testResult.ok ? "test-ok" : "test-fail"}>
+                  {testResult.ok
+                    ? `✓ ${testResult.modelId} 连接成功`
+                    : `✗ ${testResult.modelId}：${testResult.message || "连接失败"}`}
+                </span>
+              </div>
+            )}
+
+            {bulkTesting && (
+              <p className="field-hint">
+                正在批量测试（{Object.keys(bulkResults).length}/{provider.models.filter((m) => m && String(m.id).trim()).length}）…
+              </p>
+            )}
+
+            {!bulkTesting && Object.keys(bulkResults).length > 0 && (
+              <div className="bulk-results">
+                <div className="bulk-results-title">
+                  <span>
+                    测试完成：
+                    {Object.values(bulkResults).filter((r) => r.ok).length} 成功 /
+                    {Object.values(bulkResults).filter((r) => !r.ok).length} 失败
+                  </span>
+                  <button className="btn btn-sm" onClick={() => setBulkResults({})}>
+                    清除
+                  </button>
+                </div>
+                {provider.models
+                  .filter((m) => m && String(m.id).trim() && bulkResults[String(m.id).trim()])
+                  .map((m) => {
+                    const r = bulkResults[String(m.id).trim()];
+                    return (
+                      <div className="bulk-result-row" key={m.id}>
+                        <span className={r.ok ? "test-ok" : "test-fail"}>
+                          {r.ok ? "✓" : "✗"}
+                        </span>
+                        <span className="bulk-result-id" title={m.id}>{m.id}</span>
+                        <span className="bulk-result-msg">
+                          {r.ok ? "连接成功" : r.message || "连接失败"}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {modelsShown && (
+              <div className="models-picker">
+                {modelsFetching && <p className="field-hint">正在请求模型列表，请稍候…</p>}
+                {!modelsFetching && modelsError && (
+                  <p className="test-fail">{modelsError}</p>
+                )}
+                {!modelsFetching && !modelsError && modelsList.length > 0 && (
+                  <>
+                    <p className="field-hint">勾选需要添加的模型，可多选：</p>
+                    <input
+                      className="input models-search"
+                      placeholder="搜索模型名称，如 deepseek…"
+                      value={modelQuery}
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      onChange={(e) => setModelQuery(e.target.value)}
+                    />
+                    {filteredModels.length === 0 ? (
+                      <p className="field-hint">未找到与「{modelQuery.trim()}」匹配的模型</p>
+                    ) : (
+                      <>
+                        <div className="models-picker-list">
+                          {filteredModels.map((m) => (
+                            <label className="checkbox" key={m}>
+                              <input
+                                type="checkbox"
+                                checked={!!selectedModels[m]}
+                                onChange={() => toggleModel(m)}
+                              />
+                              <span className="model-id" title={m}>{m}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="models-picker-actions">
+                          <button className="btn btn-sm" onClick={addSelectedModels} disabled={selectedCount === 0}>
+                            添加选中（{selectedCount}）
+                          </button>
+                          <button className="btn btn-sm" onClick={() => setModelsShown(false)}>
+                            关闭
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -310,6 +535,7 @@ function PromptEditor({ promptKey, title }) {
 function SettingsPage() {
   const { config, loaded, saving, saveError, load, update, addProvider } = useConfigStore();
   const [presetIndex, setPresetIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState("general");
 
   useEffect(() => {
     load();
@@ -341,124 +567,148 @@ function SettingsPage() {
         </span>
       </button>
 
-      <Section title="常规">
-        <div className="route-grid">
-          <Field label="触发方式">
-            <select
-              className="input"
-              value={config.triggerMode}
-              onChange={(e) => update((c) => { c.triggerMode = e.target.value; })}
-            >
-              <option value="auto">选中后自动翻译</option>
-              <option value="button">选中后显示悬浮按钮</option>
-            </select>
-          </Field>
-
-          <Field label="目标语言">
-            <select
-              className="input"
-              value={config.targetLang}
-              onChange={(e) => update((c) => { c.targetLang = e.target.value; })}
-            >
-              {TARGET_LANGS.map((l) => (
-                <option key={l.value} value={l.value}>{l.label}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="主题">
-            <select
-              className="input"
-              value={config.theme}
-              onChange={(e) => update((c) => { c.theme = e.target.value; })}
-            >
-              <option value="light">亮色</option>
-              <option value="dark">暗色</option>
-            </select>
-          </Field>
-
-          <Field label="结果字号">
-            <select
-              className="input"
-              value={config.fontSize}
-              onChange={(e) => update((c) => { c.fontSize = e.target.value; })}
-            >
-              <option value="small">小</option>
-              <option value="medium">中</option>
-              <option value="large">大</option>
-            </select>
-          </Field>
-
-          <Field label="查词自动发音">
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={config.pronounceAuto}
-                onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
-              />
-              开启
-            </label>
-          </Field>
-
-          <Field label="发音口音">
-            <select
-              className="input"
-              value={config.pronounceAccent}
-              onChange={(e) => update((c) => { c.pronounceAccent = e.target.value; })}
-            >
-              <option value="us">美式</option>
-              <option value="uk">英式</option>
-            </select>
-          </Field>
-
-          <Field label="记住卡片大小">
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={!!config.rememberCardSize}
-                onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
-              />
-              结果卡片记住上次手动调整的大小（默认关闭）
-            </label>
-          </Field>
-        </div>
-      </Section>
-
-      <Section title="AI 服务提供商">
-        {config.providers.length === 0 && (
-          <p className="field-hint">尚未添加提供商。从下方预设中选择添加，然后填入 API Key。</p>
-        )}
-        {config.providers.map((provider) => (
-          <ProviderCard key={provider.id} provider={provider} />
-        ))}
-        <div className="add-provider">
-          <select
-            className="input"
-            value={presetIndex}
-            onChange={(e) => setPresetIndex(Number(e.target.value))}
-          >
-            {PROVIDER_PRESETS.map((preset, i) => (
-              <option key={i} value={i}>{preset.name}</option>
-            ))}
-          </select>
+      <nav className="settings-tabs">
+        {SETTINGS_TABS.map((tab) => (
           <button
-            className="btn"
-            onClick={() => addProvider(PROVIDER_PRESETS[presetIndex])}
+            key={tab.id}
+            className={`settings-tab ${activeTab === tab.id ? "is-active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+            title={tab.label}
           >
-            + 添加提供商
+            <span className="settings-tab-full">{tab.label}</span>
+            <span className="settings-tab-short">{tab.short}</span>
           </button>
-        </div>
-      </Section>
+        ))}
+      </nav>
 
-      <Section title="模型路由">
-        <RouteEditor kind="translate" title="翻译（句子/段落）" />
-        <RouteEditor kind="lookup" title="AI 解释（单词卡切换）" />
-      </Section>
+      <div className="settings-content">
+        {activeTab === "general" && (
+          <Section title="常规">
+            <div className="route-grid">
+              <Field label="触发方式">
+                <select
+                  className="input"
+                  value={config.triggerMode}
+                  onChange={(e) => update((c) => { c.triggerMode = e.target.value; })}
+                >
+                  <option value="auto">选中后自动翻译</option>
+                  <option value="button">选中后显示悬浮按钮</option>
+                </select>
+              </Field>
 
-      <Section title="Prompt 模板">
-        <PromptEditor promptKey="translate" title="翻译 Prompt" />
-        <PromptEditor promptKey="explain" title="AI 解释 Prompt" />
-      </Section>
+              <Field label="目标语言">
+                <select
+                  className="input"
+                  value={config.targetLang}
+                  onChange={(e) => update((c) => { c.targetLang = e.target.value; })}
+                >
+                  {TARGET_LANGS.map((l) => (
+                    <option key={l.value} value={l.value}>{l.label}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="主题">
+                <select
+                  className="input"
+                  value={config.theme}
+                  onChange={(e) => update((c) => { c.theme = e.target.value; })}
+                >
+                  <option value="light">亮色</option>
+                  <option value="dark">暗色</option>
+                </select>
+              </Field>
+
+              <Field label="结果字号">
+                <select
+                  className="input"
+                  value={config.fontSize}
+                  onChange={(e) => update((c) => { c.fontSize = e.target.value; })}
+                >
+                  <option value="small">小</option>
+                  <option value="medium">中</option>
+                  <option value="large">大</option>
+                </select>
+              </Field>
+
+              <Field label="查词自动发音">
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={config.pronounceAuto}
+                    onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
+                  />
+                  开启
+                </label>
+              </Field>
+
+              <Field label="发音口音">
+                <select
+                  className="input"
+                  value={config.pronounceAccent}
+                  onChange={(e) => update((c) => { c.pronounceAccent = e.target.value; })}
+                >
+                  <option value="us">美式</option>
+                  <option value="uk">英式</option>
+                </select>
+              </Field>
+
+              <Field label="记住卡片大小">
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={!!config.rememberCardSize}
+                    onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
+                  />
+                  结果卡片记住上次手动调整的大小（默认关闭）
+                </label>
+              </Field>
+            </div>
+          </Section>
+        )}
+
+        {activeTab === "providers" && (
+          <Section title="AI 服务提供商">
+            <div className="add-provider">
+              <select
+                className="input"
+                value={presetIndex}
+                onChange={(e) => setPresetIndex(Number(e.target.value))}
+              >
+                {PROVIDER_PRESETS.map((preset, i) => (
+                  <option key={i} value={i}>{preset.name}</option>
+                ))}
+              </select>
+              <button
+                className="btn"
+                onClick={() => addProvider(PROVIDER_PRESETS[presetIndex])}
+              >
+                + 添加提供商
+              </button>
+            </div>
+            {config.providers.length === 0 && (
+              <p className="field-hint">尚未添加提供商。从上方预设中选择添加，然后填入 API Key。</p>
+            )}
+            {config.providers.map((provider) => (
+              <ProviderCard key={provider.id} provider={provider} />
+            ))}
+          </Section>
+        )}
+
+        {activeTab === "routing" && (
+          <Section title="模型路由">
+            <RouteEditor kind="translate" title="翻译（句子/段落）" />
+            <RouteEditor kind="lookup" title="AI 解释（单词卡切换）" />
+          </Section>
+        )}
+
+        {activeTab === "prompts" && (
+          <Section title="Prompt 模板">
+            <PromptEditor promptKey="translate" title="翻译 Prompt" />
+            <PromptEditor promptKey="explain" title="AI 解释 Prompt" />
+          </Section>
+        )}
+      </div>
     </div>
   );
 }

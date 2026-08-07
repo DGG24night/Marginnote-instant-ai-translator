@@ -8,6 +8,18 @@ function genId() {
   return `p-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+// 防御性清理：移除各提供商中 id 为空的模型（兼容历史脏数据）
+function sanitizeConfig(config) {
+  let changed = false;
+  const providers = (config.providers || []).map((p) => {
+    const raw = p.models || [];
+    const models = raw.filter((m) => m && m.id && String(m.id).trim());
+    if (models.length !== raw.length) changed = true;
+    return { ...p, models };
+  });
+  return changed ? { ...config, providers } : config;
+}
+
 export const PROVIDER_PRESETS = [
   {
     name: "DeepSeek",
@@ -86,7 +98,13 @@ export const useConfigStore = create((set, get) => ({
   load: async () => {
     try {
       const config = await MNBridge.send("getConfig");
-      set({ config: { ...EMPTY_CONFIG, ...config }, loaded: true });
+      const merged = { ...EMPTY_CONFIG, ...config };
+      // 防御性清理：移除 id 为空/无效的模型（曾因旧版 bug 写入空 id 行）
+      const cleaned = sanitizeConfig(merged);
+      set({ config: cleaned, loaded: true });
+      if (cleaned !== merged) {
+        MNBridge.send("saveConfig", cleaned).catch(() => {});
+      }
     } catch (error) {
       console.error("getConfig failed", error);
       set({ loaded: true });

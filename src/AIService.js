@@ -140,6 +140,31 @@ var MNIAIService = (function () {
         }
         return { ok: false, status: res.status, message: extractError(res.status, res) };
       });
+    },
+
+    // 获取模型列表：GET {baseURL}/models（OpenAI 兼容），返回模型 id 数组
+    fetchModels: function (baseURL, apiKey) {
+      var url = String(baseURL || "").trim().replace(/\/+$/, "") + "/models";
+      return MNNetwork.fetch(url, {
+        method: "GET",
+        headers: { "Authorization": "Bearer " + String(apiKey || "") },
+        timeout: 20
+      }).then(function (res) {
+        if (res.status >= 200 && res.status < 300) {
+          var obj = res.json();
+          var list = obj && obj.data;
+          if (list && list.length) {
+            var ids = [];
+            for (var i = 0; i < list.length; i++) {
+              if (list[i] && list[i].id) ids.push(String(list[i].id));
+            }
+            if (ids.length) return { models: ids };
+            return { models: [], message: "接口返回的模型列表为空" };
+          }
+          return { models: [], message: "接口返回格式异常（未找到 data 数组）" };
+        }
+        return { models: [], message: extractError(res.status, res) };
+      });
     }
   };
 })();

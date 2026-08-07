@@ -147,9 +147,85 @@ body {
 /* ---------- 设置面板 ---------- */
 
 .settings-page {
-  max-width: 720px;
+  max-width: 920px;
   margin: 0 auto;
   padding: 20px 24px 60px;
+}
+
+/* 顶部等宽标签导航（宽屏完整文案，窄屏缩写） */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+}
+
+.settings-tab {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-tab:hover {
+  background: var(--bg-hover);
+}
+
+.settings-tab.is-active {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* 窄屏等宽标签时显示短文案 */
+.settings-tab-short {
+  display: none;
+}
+
+.settings-content .section {
+  margin-top: 16px;
+}
+
+/* 窄屏：标签缩写；表单字段改单列 */
+@media (max-width: 700px) {
+  .settings-tab {
+    padding: 8px 4px;
+    font-size: 12px;
+  }
+
+  .settings-tab-full {
+    display: none;
+  }
+
+  .settings-tab-short {
+    display: inline;
+  }
+
+  .route-grid .field {
+    width: 100%;
+  }
+
+  .model-row {
+    flex-wrap: wrap;
+  }
+
+  .model-row .checkbox {
+    margin-left: auto;
+  }
 }
 
 .settings-header {
@@ -260,6 +336,46 @@ body {
   margin-right: 10px;
 }
 
+/* 折叠/展开 */
+.provider-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 6px;
+  margin-right: 4px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.provider-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.provider-caret {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.provider-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.provider-meta {
+  margin-left: auto;
+  margin-right: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.provider-body {
+  margin-top: 4px;
+}
+
 .model-row {
   display: flex;
   align-items: center;
@@ -273,6 +389,79 @@ body {
 
 .model-row .checkbox {
   margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.model-row .btn {
+  margin-right: 8px;
+}
+
+.model-row .btn:last-child {
+  margin-right: 0;
+}
+
+.model-test-result {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 模型操作工具栏（添加模型 / 批量测试 / 获取列表） */
+.model-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 批量测试结果面板 */
+.bulk-results {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.bulk-results-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.bulk-result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+  line-height: 1.5;
+}
+
+.bulk-result-row .test-ok,
+.bulk-result-row .test-fail {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.bulk-result-id {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+.bulk-result-msg {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .provider-actions {
@@ -295,9 +484,59 @@ body {
   font-size: 13px;
 }
 
+/* 获取模型列表：勾选面板 */
+.models-picker {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.models-search {
+  margin-bottom: 8px;
+}
+
+.models-picker-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 10px;
+}
+
+/* 每项等宽（双列），勾选框对齐；名称剩余宽度自适应省略 */
+.models-picker-list .checkbox {
+  flex: 0 0 calc(50% - 7px);
+  min-width: 0;
+  align-items: center;
+}
+
+.model-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+@media (max-width: 700px) {
+  .models-picker-list .checkbox {
+    flex: 0 0 100%;
+  }
+}
+
+.models-picker-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .add-provider {
   display: flex;
   align-items: center;
+  margin-bottom: 14px;
 }
 
 .add-provider .input {
