@@ -2,6 +2,7 @@ function createMNInstantAITranslatorAddon(mainPath) {
   return JSB.defineClass("MNInstantAITranslatorAddon : JSExtension", {
     sceneWillConnect: function () {
       self.mainPath = mainPath;
+      MNIATFloatingCard.setMainPath(mainPath);
       self.webController = __MN_WEB_API_MNInstantAITranslatorAddon.createController(mainPath, self);
 
       self.layoutViewController = function () {
@@ -12,6 +13,9 @@ function createMNInstantAITranslatorAddon(mainPath) {
     },
 
     sceneDidDisconnect: function () {
+      MNIATSelectionMonitor.stop();
+      MNIATFlow.cancelCurrent();
+      MNIATFloatingCard.destroy();
       if (self.webController && self.webController.view && self.webController.view.superview) {
         self.webController.view.removeFromSuperview();
       }
@@ -31,6 +35,30 @@ function createMNInstantAITranslatorAddon(mainPath) {
         __MN_WEB_API_MNInstantAITranslatorAddon.showPanel(self.webController);
         self.layoutViewController();
       }
+
+      var win = self.window;
+      MNIATSelectionMonitor.start(win, {
+        onSelection: function (text, anchorRect) {
+          var config = MNIATSettings.load();
+          if (!config.enabled) return; // 总开关关闭时不响应划词
+          if (config.triggerMode === "button") {
+            // 悬浮按钮模式：先显示小按钮，点击后才触发
+            MNIATFloatingCard.showTrigger(win, anchorRect, text);
+          } else {
+            MNIATFlow.handleSelection(win, text, anchorRect);
+          }
+        },
+        onClear: function () {
+          // 选区清空：收起悬浮按钮（结果卡片保留，由用户手动关闭或被新选区取代）
+          MNIATFloatingCard.hideTrigger();
+        }
+      });
+    },
+
+    notebookWillClose: function () {
+      MNIATSelectionMonitor.stop();
+      MNIATFlow.cancelCurrent();
+      MNIATFloatingCard.hide();
     },
 
     controllerWillLayoutSubviews: function (controller) {

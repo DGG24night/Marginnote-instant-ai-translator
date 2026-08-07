@@ -429,6 +429,7 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     const context = {
       controller,
       addon: controller.addon,
+      kind: "panel",
       closePanel: performCloseWindow,
     };
 
