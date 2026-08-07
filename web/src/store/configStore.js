@@ -68,6 +68,7 @@ const EMPTY_CONFIG = {
   fontSize: "medium",
   pronounceAuto: true,
   pronounceAccent: "us",
+  rememberCardSize: false,
   providers: [],
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },

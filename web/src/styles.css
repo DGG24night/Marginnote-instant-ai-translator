@@ -342,24 +342,23 @@ body {
 
 /* ---------- 结果卡片 ---------- */
 
-/* 卡片页挂载时给 html 加 .card-fit：高度由内容决定，
-   前端测量 body.scrollHeight 经 bridge 通知插件调整 WebView 高度 */
+/* 卡片页挂载时给 html 加 .card-fit：
+   - 页面高度 = WebView 高度（100% 高度链），toolbar 固定顶部，内容在 .card-body 内部滚动
+   - 自然内容高度由隐藏的 .card-measure 测量，经 bridge 通知插件调整 WebView 高度 */
 html.card-fit,
 html.card-fit body,
 html.card-fit #root {
-  height: auto;
-}
-
-html.card-fit .card-page {
-  height: auto;
+  height: 100%;
 }
 
 html.card-fit .card-body {
-  flex: none;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .card-page {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -374,12 +373,27 @@ html.card-fit .card-body {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  user-select: none;
 }
 
+/* 顶部拖动提示（原生层在 webView 之上有一块透明拖动条，覆盖该区域左侧） */
 .card-mode {
   font-size: 12px;
   color: var(--accent);
   font-weight: 600;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+}
+
+.card-drag-hint {
+  margin-right: 6px;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  font-size: 13px;
+  letter-spacing: 1px;
 }
 
 .card-toolbar-actions {
@@ -455,6 +469,96 @@ html.card-fit .card-body {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.9em;
+}
+
+.card-result hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 10px 0;
+}
+
+/* 围栏代码块（覆盖 .card-result 继承的 pre-wrap，保证代码换行正确） */
+.card-result pre {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.card-result pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.card-result blockquote {
+  margin: 0 0 8px;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.card-result blockquote p {
+  margin: 4px 0;
+}
+
+.card-result table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 8px;
+  font-size: 0.95em;
+}
+
+.card-result th,
+.card-result td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.card-result th {
+  background: var(--bg-hover);
+  font-weight: 600;
+}
+
+.card-result a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.card-result a:active {
+  text-decoration: underline;
+}
+
+.card-result del {
+  color: var(--text-secondary);
+}
+
+.card-result img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* 隐藏测量器：与 .card-body 相同的宽度/内边距/排版，
+   脱离文档流测量内容自然高度（不影响布局与滚动） */
+.card-measure {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-size-result);
+  line-height: 1.65;
 }
 
 .card-body {

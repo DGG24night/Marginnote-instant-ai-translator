@@ -290,6 +290,9 @@ function PromptEditor({ promptKey, title }) {
         rows={6}
         placeholder={defaultPrompt || "加载默认模板…"}
         value={value}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
         onChange={(e) =>
           update((config) => { config.prompts[promptKey] = e.target.value; })
         }
@@ -406,6 +409,17 @@ function SettingsPage() {
               <option value="us">美式</option>
               <option value="uk">英式</option>
             </select>
+          </Field>
+
+          <Field label="记住卡片大小">
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={!!config.rememberCardSize}
+                onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
+              />
+              结果卡片记住上次手动调整的大小（默认关闭）
+            </label>
           </Field>
         </div>
       </Section>

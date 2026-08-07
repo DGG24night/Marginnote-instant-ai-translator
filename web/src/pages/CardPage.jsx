@@ -21,6 +21,9 @@ function CardPage() {
   const [copied, setCopied] = useState(false);
   const readySentRef = useRef(false);
   const audioRef = useRef(null);
+  const toolbarRef = useRef(null);
+  const measureRef = useRef(null);
+  const dictRef = useRef(null);
   const { config, load } = useConfigStore();
 
   // 播放发音
@@ -100,11 +103,23 @@ function CardPage() {
     };
   }, [load, pronounce]);
 
-  // 内容变化后测量实际高度，经 bridge 通知插件调整卡片 WebView 高度
+  // 内容变化后测量实际高度，经 bridge 通知插件调整卡片 WebView 高度。
+  // 测量 .card-measure（隐藏测量器）的自然高度 + toolbar 高度，
+  // 而非 body.scrollHeight —— 页面高度现在是 100% 布局，toolbar 固定、body 内部滚动。
   const lastHeightRef = useRef(0);
   useEffect(() => {
     const timer = setTimeout(() => {
-      const height = Math.ceil(document.body.scrollHeight);
+      const isText = state.status === "streaming" || state.status === "done";
+      const toolbarH = toolbarRef.current ? toolbarRef.current.offsetHeight : 0;
+      let height = 0;
+      if (isText && measureRef.current) {
+        height = measureRef.current.offsetHeight + toolbarH;
+      } else if (state.status === "dict" && dictRef.current) {
+        height = dictRef.current.offsetHeight + toolbarH;
+      } else {
+        height = document.body.scrollHeight;
+      }
+      height = Math.ceil(height);
       if (height > 0 && Math.abs(height - lastHeightRef.current) > 2) {
         lastHeightRef.current = height;
         MNBridge.send("resizeCard", { height }).catch(() => {});
@@ -156,8 +171,11 @@ function CardPage() {
 
   return (
     <div className="card-page">
-      <div className="card-toolbar">
-        <span className="card-mode">{modeLabel}</span>
+      <div className="card-toolbar" ref={toolbarRef}>
+        <span className="card-mode">
+          <span className="card-drag-hint" title="按住此处可拖动窗口">⠿</span>
+          {modeLabel}
+        </span>
         <span className="card-toolbar-actions">
           <button className="icon-btn" title="复制" onClick={copyResult}>
             {copied ? "✓" : "⧉"}
@@ -186,7 +204,7 @@ function CardPage() {
         )}
 
         {state.status === "dict" && state.dict && (
-          <div className="dict-result">
+          <div className="dict-result" ref={dictRef}>
             <div className="dict-head">
               <span className="dict-word">{state.dict.word}</span>
               <button
@@ -233,6 +251,14 @@ function CardPage() {
           </div>
         )}
       </div>
+
+      {(state.status === "streaming" || state.status === "done") && (
+        <div
+          className="card-measure"
+          ref={measureRef}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }}
+        />
+      )}
     </div>
   );
 }

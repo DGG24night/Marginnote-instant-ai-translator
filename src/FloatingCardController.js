@@ -9,8 +9,14 @@ var MNIATFloatingCard = (function () {
   var CARD_HEIGHT = 180;      // 初始高度（loading 态），内容到达后由前端测量上报自适应
   var CARD_MIN_HEIGHT = 80;
   var CARD_MAX_HEIGHT = 420;
+  var CARD_MIN_WIDTH = 260;
+  var CARD_MAX_WIDTH = 520;
   var CARD_MARGIN = 8;
   var EDGE_PADDING = 12;
+  var CARD_DRAG_TOP = 44;             // 顶部拖动条高度（覆盖 web toolbar 区域）
+  var CARD_DRAG_BAR_RIGHT = 100;      // 拖动条右侧让出的宽度（避开复制/关闭按钮）
+  var CARD_RESIZE_HANDLE_SIZE = 40;   // 右下角缩放手柄触摸区
+  var CARD_SIZE_KEY = "mn_iat_card_size"; // NSUserDefaults：记住的卡片尺寸
 
   var BRIDGE_SCHEME = "mnaddon";
   var BRIDGE_HOST = "bridge";
@@ -39,6 +45,55 @@ var MNIATFloatingCard = (function () {
 
   function encodeEventJSON(value) {
     return JSON.stringify(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  }
+
+  // ---------- 记住卡片尺寸 ----------
+
+  function rememberSizeEnabled() {
+    try {
+      return MNIATSettings.load().rememberCardSize === true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function loadCardSize() {
+    var v = NSUserDefaults.standardUserDefaults().objectForKey(CARD_SIZE_KEY);
+    if (v && typeof v.width === "number" && typeof v.height === "number") {
+      return { width: v.width, height: v.height };
+    }
+    return null;
+  }
+
+  function saveCardSize(width, height) {
+    if (!rememberSizeEnabled()) return;
+    NSUserDefaults.standardUserDefaults().setObjectForKey({ width: width, height: height }, CARD_SIZE_KEY);
+  }
+
+  // 同步卡片各层 frame（view / 白色容器 / webView / 拖动条 / 缩放手柄），可选项：持久化尺寸
+  function applyCardFrame(c, f, persistSize) {
+    c.view.frame = { x: f.x, y: f.y, width: f.width, height: f.height };
+    c._container.frame = { x: 0, y: 0, width: f.width, height: f.height };
+    c._webView.frame = { x: 0, y: 0, width: f.width, height: f.height };
+    if (c._dragBar) {
+      c._dragBar.frame = {
+        x: 0,
+        y: 0,
+        width: Math.max(0, f.width - CARD_DRAG_BAR_RIGHT),
+        height: CARD_DRAG_TOP
+      };
+    }
+    if (c._resizeHandle) {
+      c._resizeHandle.frame = {
+        x: f.width - CARD_RESIZE_HANDLE_SIZE,
+        y: f.height - CARD_RESIZE_HANDLE_SIZE,
+        width: CARD_RESIZE_HANDLE_SIZE,
+        height: CARD_RESIZE_HANDLE_SIZE
+      };
+    }
+    if (persistSize === true) {
+      saveCardSize(f.width, f.height);
+    }
   }
 
   function decodeBridgeMessage(requestURL) {
@@ -76,22 +131,24 @@ var MNIATFloatingCard = (function () {
     return NSURL.URLWithString("file://" + localEntryPath + "#/card");
   }
 
-  function computeFrame(anchorRect, bounds) {
+  function computeFrame(anchorRect, bounds, size) {
+    var width = (size && size.width) ? size.width : CARD_WIDTH;
+    var height = (size && size.height) ? size.height : CARD_HEIGHT;
     var x;
     var y;
     if (anchorRect) {
       x = anchorRect.x;
       y = anchorRect.y + anchorRect.height + CARD_MARGIN;
-      if (y + CARD_HEIGHT > bounds.y + bounds.height - EDGE_PADDING) {
-        y = anchorRect.y - CARD_HEIGHT - CARD_MARGIN;
+      if (y + height > bounds.y + bounds.height - EDGE_PADDING) {
+        y = anchorRect.y - height - CARD_MARGIN;
       }
     } else {
-      x = bounds.x + (bounds.width - CARD_WIDTH) / 2;
-      y = bounds.y + (bounds.height - CARD_HEIGHT) / 2;
+      x = bounds.x + (bounds.width - width) / 2;
+      y = bounds.y + (bounds.height - height) / 2;
     }
-    x = Math.max(bounds.x + EDGE_PADDING, Math.min(x, bounds.x + bounds.width - CARD_WIDTH - EDGE_PADDING));
-    y = Math.max(bounds.y + EDGE_PADDING, Math.min(y, bounds.y + bounds.height - CARD_HEIGHT - EDGE_PADDING));
-    return { x: x, y: y, width: CARD_WIDTH, height: CARD_HEIGHT };
+    x = Math.max(bounds.x + EDGE_PADDING, Math.min(x, bounds.x + bounds.width - width - EDGE_PADDING));
+    y = Math.max(bounds.y + EDGE_PADDING, Math.min(y, bounds.y + bounds.height - height - EDGE_PADDING));
+    return { x: x, y: y, width: width, height: height };
   }
 
   // ---------- 卡片 ViewController ----------
@@ -117,6 +174,38 @@ var MNIATFloatingCard = (function () {
       self._webView.backgroundColor = UIColor.whiteColor();
       self._webView.delegate = self;
       self._container.addSubview(self._webView);
+
+      // 原生拖动条：透明，覆盖 web toolbar 左侧区域（避开右侧按钮），
+      // 手势加在纯 UIView 上，避免被 UIWebView 拦截（macOS WebView 会吞掉区域内的鼠标事件）
+      self._dragBar = new UIView({
+        x: 0,
+        y: 0,
+        width: CARD_WIDTH - CARD_DRAG_BAR_RIGHT,
+        height: CARD_DRAG_TOP
+      });
+      self._dragBar.backgroundColor = UIColor.clearColor();
+      self._dragPan = new UIPanGestureRecognizer(self, "handleCardPan:");
+      self._dragBar.addGestureRecognizer(self._dragPan);
+      self._container.addSubview(self._dragBar);
+
+      // 右下角缩放手柄
+      self._resizeHandle = new UIView({
+        x: CARD_WIDTH - CARD_RESIZE_HANDLE_SIZE,
+        y: CARD_HEIGHT - CARD_RESIZE_HANDLE_SIZE,
+        width: CARD_RESIZE_HANDLE_SIZE,
+        height: CARD_RESIZE_HANDLE_SIZE
+      });
+      self._resizeHandle.backgroundColor = UIColor.clearColor();
+      self._resizeHandle.userInteractionEnabled = true;
+      var resizeIcon = new UILabel({ x: 10, y: 10, width: 20, height: 20 });
+      resizeIcon.text = "↘";
+      resizeIcon.font = UIFont.systemFontOfSize(14);
+      resizeIcon.textColor = UIColor.grayColor();
+      resizeIcon.alpha = 0.45;
+      self._resizeHandle.addSubview(resizeIcon);
+      self._resizePan = new UIPanGestureRecognizer(self, "handleCardResize:");
+      self._resizeHandle.addGestureRecognizer(self._resizePan);
+      self._container.addSubview(self._resizeHandle);
     },
 
     webViewDidFinishLoad: function () {
@@ -167,6 +256,62 @@ var MNIATFloatingCard = (function () {
         console.log("[MNIATCard] bridge error: " + error);
         return false;
       }
+    },
+
+    // 拖动卡片：手势仅挂在顶部透明拖动条上（不拦截 webView 内容区）
+    handleCardPan: function (recognizer) {
+      if (recognizer.state === 1) {
+        self._panStartFrame = self.view.frame;
+        return;
+      }
+
+      if (recognizer.state === 2) {
+        var translation = recognizer.translationInView(self.view.superview);
+        var superview = self.view.superview;
+        var bounds = superview ? superview.bounds : { x: 0, y: 0, width: 1920, height: 1080 };
+        var start = self._panStartFrame;
+        var nx = start.x + translation.x;
+        var ny = start.y + translation.y;
+        nx = Math.max(bounds.x, Math.min(nx, bounds.x + bounds.width - start.width));
+        ny = Math.max(bounds.y, Math.min(ny, bounds.y + bounds.height - start.height));
+        self.view.frame = { x: nx, y: ny, width: start.width, height: start.height };
+        return;
+      }
+
+      if (recognizer.state === 3) {
+        self._panStartFrame = null;
+      }
+    },
+
+    // 右下角缩放手柄：改变卡片宽高，结束后按"记住大小"开关决定是否持久化
+    handleCardResize: function (recognizer) {
+      if (recognizer.state === 1) {
+        self._resizeStartFrame = self.view.frame;
+        return;
+      }
+
+      if (recognizer.state === 2) {
+        var translation = recognizer.translationInView(self.view.superview);
+        var start = self._resizeStartFrame;
+        var width = Math.max(CARD_MIN_WIDTH, Math.min(start.width + translation.x, CARD_MAX_WIDTH));
+        var height = Math.max(CARD_MIN_HEIGHT, Math.min(start.height + translation.y, CARD_MAX_HEIGHT));
+        var superview = self.view.superview;
+        var bounds = superview ? superview.bounds : { x: 0, y: 0, width: 1920, height: 1080 };
+        var f = { x: start.x, y: start.y, width: width, height: height };
+        if (f.x + width > bounds.x + bounds.width - EDGE_PADDING) {
+          f.x = Math.max(bounds.x + EDGE_PADDING, bounds.x + bounds.width - width - EDGE_PADDING);
+        }
+        if (f.y + height > bounds.y + bounds.height - EDGE_PADDING) {
+          f.y = Math.max(bounds.y + EDGE_PADDING, bounds.y + bounds.height - height - EDGE_PADDING);
+        }
+        applyCardFrame(self, f, false);
+        return;
+      }
+
+      if (recognizer.state === 3) {
+        saveCardSize(self.view.frame.width, self.view.frame.height);
+        self._resizeStartFrame = null;
+      }
     }
   });
 
@@ -194,7 +339,8 @@ var MNIATFloatingCard = (function () {
         return false;
       }
 
-      c.view.frame = computeFrame(anchorRect, studyController.view.bounds);
+      var savedSize = rememberSizeEnabled() ? loadCardSize() : null;
+      applyCardFrame(c, computeFrame(anchorRect, studyController.view.bounds, savedSize), false);
       if (!c.view.superview) {
         studyController.view.addSubview(c.view);
       }
@@ -220,9 +366,11 @@ var MNIATFloatingCard = (function () {
     },
 
     // 前端测量内容高度后调用：钳制在 [MIN, MAX]，保持水平位置，
-    // 底部越界时向上收；宽度不变
+    // 底部越界时向上收；宽度不变。
+    // 若开启"记住大小"且已保存过尺寸，则以用户手动调整的大小为准，跳过自动高度。
     resizeToHeight: function (height) {
       if (!controller || !controller.view || !controller.view.superview) return;
+      if (rememberSizeEnabled() && loadCardSize()) return;
       var h = Math.max(CARD_MIN_HEIGHT, Math.min(height, CARD_MAX_HEIGHT));
       var f = controller.view.frame;
       if (Math.abs(f.height - h) < 1) return;
@@ -231,9 +379,7 @@ var MNIATFloatingCard = (function () {
       if (y + h > bounds.y + bounds.height - EDGE_PADDING) {
         y = Math.max(bounds.y + EDGE_PADDING, bounds.y + bounds.height - h - EDGE_PADDING);
       }
-      controller.view.frame = { x: f.x, y: y, width: f.width, height: h };
-      controller._container.frame = { x: 0, y: 0, width: f.width, height: h };
-      controller._webView.frame = { x: 0, y: 0, width: f.width, height: h };
+      applyCardFrame(controller, { x: f.x, y: y, width: f.width, height: h }, false);
     },
 
     hide: function () {

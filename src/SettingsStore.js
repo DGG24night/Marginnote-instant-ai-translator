@@ -20,6 +20,7 @@ var MNIATSettings = (function () {
       fontSize: "medium",           // small | medium | large
       pronounceAuto: true,          // 查词后自动发音
       pronounceAccent: "us",        // uk | us
+      rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
