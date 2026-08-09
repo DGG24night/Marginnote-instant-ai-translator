@@ -1,6 +1,6 @@
 {
   "name": "instant-ai-translator",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "build": "node scripts/build-release.js",
