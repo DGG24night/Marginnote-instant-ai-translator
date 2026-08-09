@@ -111,13 +111,13 @@ export function renderMarkdown(source) {
       continue;
     }
 
-    // 标题
-    const heading = trimmed.match(/^(#{1,4})\s+(.*)$/);
+    // 标题（#~###### 语义化映射 h1-h6，字号差异由样式表 .card-result/.card-measure 控制）
+    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       closeList();
       closeQuote();
-      const level = heading[1].length + 2; // h3-h6，卡片内避免过大标题
-      html.push(`<h${Math.min(level, 6)}>${renderInline(heading[2])}</h${Math.min(level, 6)}>`);
+      const level = heading[1].length;
+      html.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
       continue;
     }
 

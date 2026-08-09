@@ -3,6 +3,7 @@
 // 事件协议（推送至卡片 window.__MNIATCardEvent）：
 //   {type:"reset"}                          卡片复用时重置界面
 //   {type:"loading", mode, text}            mode: translate | lookup | explain
+//   {type:"delta", accumulated}             流式增量（AI 翻译/解释打字机效果）
 //   {type:"translateResult", text}          翻译/解释完成
 //   {type:"dictResult", data}               词典结果（含 pronounce 配置）
 //   {type:"error", message}                 失败
@@ -20,6 +21,10 @@ var MNIATFlow = (function () {
 
   function runAI(job, routingKind, promptKind) {
     job.session = MNIAIService.run(routingKind, promptKind, job.text, {
+      onDelta: function (delta, accumulated) {
+        // 流式增量：前端 accumulated 累积渲染（打字机效果）
+        pushEvent({ type: "delta", accumulated: accumulated });
+      },
       onDone: function (full) {
         if (full && full.trim().length > 0) {
           pushEvent({ type: "translateResult", text: full });

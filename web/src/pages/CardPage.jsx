@@ -127,6 +127,12 @@ function CardPage() {
         return;
       }
 
+      // 新任务（reset=复用卡片 / loading=首次加载）时刷新外观配置：
+      // 卡片 WebView 常驻复用，设置页里改的字号/主题需要在此重新拉取才会生效
+      if (event.type === "reset" || event.type === "loading") {
+        load();
+      }
+
       setState((prev) => {
         switch (event.type) {
           case "reset":

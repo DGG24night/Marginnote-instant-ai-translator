@@ -34,12 +34,36 @@ function Section({ title, children }) {
   );
 }
 
-function Field({ label, children }) {
+// 帮助提示气泡：圆形感叹号图标，鼠标悬停或点按展开说明文字。
+// 气泡挂在图标容器内，鼠标从图标移到气泡不会消失；触屏（无 hover）环境下点按切换。
+function Hint({ children }) {
+  const [open, setOpen] = useState(false);
   return (
-    <label className="field">
-      <span className="field-label">{label}</span>
+    <span
+      className="mniat-hint"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen((v) => !v);
+      }}
+    >
+      <span className="mniat-hint-icon" aria-label="帮助说明">!</span>
+      {open && <span className="mniat-hint-bubble">{children}</span>}
+    </span>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <div className="field">
+      <span className="field-label">
+        {label}
+        {hint ? <Hint>{hint}</Hint> : null}
+      </span>
       {children}
-    </label>
+    </div>
   );
 }
 
@@ -515,11 +539,6 @@ function RouteEditor({ kind, title }) {
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-          {(!model || !model.supportsReasoning) ? (
-            <span className="field-hint">当前模型未标记支持推理</span>
-          ) : (
-            <span className="field-hint">Qwen 系发送 enable_thinking，智谱发送 thinking 开关，其他发送 reasoning_effort</span>
-          )}
         </Field>
       </div>
     </div>
@@ -648,7 +667,10 @@ function SettingsPage() {
                 </select>
               </Field>
 
-              <Field label="查词服务提供商">
+              <Field
+                label="查词服务提供商"
+                hint="划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。"
+              >
                 <select
                   className="input"
                   value={config.lookupProvider || "youdao"}
@@ -659,12 +681,14 @@ function SettingsPage() {
                   <option value="haici">海词词典</option>
                   <option value="ai">AI 解释（调用 AI）</option>
                 </select>
-                <span className="field-hint">
-                  划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。
-                </span>
               </Field>
 
-              <Field label="AI 解释发音">
+              <Field
+                label="AI 解释发音"
+                hint={config.lookupProvider === "ai"
+                  ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
+                  : "需将「查词服务提供商」选为「AI 解释」后生效。"}
+              >
                 <select
                   className="input"
                   value={config.aiExplainPronounce || "youdao"}
@@ -675,11 +699,6 @@ function SettingsPage() {
                   <option value="haici">海词词典</option>
                   <option value="bing">必应词典</option>
                 </select>
-                <span className="field-hint">
-                  {config.lookupProvider === "ai"
-                    ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
-                    : "需将「查词服务提供商」选为「AI 解释」后生效。"}
-                </span>
               </Field>
 
               <Field label="主题">
@@ -705,6 +724,17 @@ function SettingsPage() {
                 </select>
               </Field>
 
+              <Field label="发音口音">
+                <select
+                  className="input"
+                  value={config.pronounceAccent}
+                  onChange={(e) => update((c) => { c.pronounceAccent = e.target.value; })}
+                >
+                  <option value="us">美式</option>
+                  <option value="uk">英式</option>
+                </select>
+              </Field>
+
               <Field label="查词自动发音">
                 <label className="checkbox">
                   <input
@@ -716,15 +746,15 @@ function SettingsPage() {
                 </label>
               </Field>
 
-              <Field label="发音口音">
-                <select
-                  className="input"
-                  value={config.pronounceAccent}
-                  onChange={(e) => update((c) => { c.pronounceAccent = e.target.value; })}
-                >
-                  <option value="us">美式</option>
-                  <option value="uk">英式</option>
-                </select>
+              <Field label="打字机效果" hint="AI 翻译/解释结果以打字机效果逐字显示（兼容所有网络环境）。">
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={config.streamMode !== false}
+                    onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
+                  />
+                  {config.streamMode !== false ? "开启" : "关闭"}
+                </label>
               </Field>
 
               <Field label="记住卡片大小">

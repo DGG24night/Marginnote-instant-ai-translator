@@ -14,7 +14,7 @@ var MNIATFloatingCard = (function () {
   var CARD_MARGIN = 8;
   var EDGE_PADDING = 12;
   var CARD_DRAG_TOP = 44;             // 顶部拖动条高度（覆盖 web toolbar 区域）
-  var CARD_DRAG_BAR_RIGHT = 100;      // 拖动条右侧让出的宽度（避开复制/关闭按钮）
+  var CARD_DRAG_BAR_RIGHT = 180;      // 拖动条右侧让出的宽度：需避开工具栏全部按钮（英/美发音、复制、关闭 ≈160px，加 12px 右边距）
   var CARD_RESIZE_HANDLE_SIZE = 40;   // 右下角缩放手柄触摸区
   var CARD_SIZE_KEY = "mn_iat_card_size"; // NSUserDefaults：记住的卡片尺寸
 

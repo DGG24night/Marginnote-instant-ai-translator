@@ -144,6 +144,61 @@ body {
   border-radius: 4px;
 }
 
+/* 帮助提示气泡（info tooltip）：圆形感叹号图标，悬停 / 点按展开说明 */
+.mniat-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: middle;
+  cursor: help;
+  user-select: none;
+}
+
+.mniat-hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--text-secondary);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+.mniat-hint:hover .mniat-hint-icon {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mniat-hint-bubble {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px var(--shadow);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: normal;
+  text-align: left;
+  font-weight: 400;
+}
+
+.mniat-hint-bubble b {
+  color: var(--text);
+}
+
 /* ---------- 设置面板 ---------- */
 
 .settings-page {
@@ -712,13 +767,43 @@ html.card-fit .card-body {
   margin-bottom: 4px;
 }
 
+/* Markdown 标题：分级字号（正文随「结果字号」档位缩放），
+   测量器 .card-measure 与结果区 .card-result 保持同一样式，保证高度测量准确。
+   注意：WebKit 不支持 calc 乘法，用加法实现档位缩放 */
+.card-result h1,
+.card-result h2,
 .card-result h3,
 .card-result h4,
 .card-result h5,
-.card-result h6 {
-  margin: 10px 0 6px;
-  font-size: calc(var(--font-size-result) + 1px);
+.card-result h6,
+.card-measure h1,
+.card-measure h2,
+.card-measure h3,
+.card-measure h4,
+.card-measure h5,
+.card-measure h6 {
+  margin: 12px 0 6px;
+  font-weight: 700;
+  line-height: 1.35;
 }
+
+.card-result h1,
+.card-measure h1 { font-size: calc(var(--font-size-result) + 8px); }
+
+.card-result h2,
+.card-measure h2 { font-size: calc(var(--font-size-result) + 5px); }
+
+.card-result h3,
+.card-measure h3 { font-size: calc(var(--font-size-result) + 3px); }
+
+.card-result h4,
+.card-measure h4 { font-size: calc(var(--font-size-result) + 2px); }
+
+.card-result h5,
+.card-measure h5 { font-size: calc(var(--font-size-result) + 1px); }
+
+.card-result h6,
+.card-measure h6 { font-size: var(--font-size-result); }
 
 .card-result code {
   background: var(--bg-hover);

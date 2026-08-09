@@ -82,6 +82,7 @@ const EMPTY_CONFIG = {
   pronounceAccent: "us",
   lookupProvider: "youdao", // youdao | bing | haici | ai（查词服务提供商）
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
+  streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
   providers: [],
   routing: {
