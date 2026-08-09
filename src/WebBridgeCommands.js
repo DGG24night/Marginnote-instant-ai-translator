@@ -38,7 +38,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     if (!payload || !payload.provider || !payload.modelId) {
       throw new Error("缺少 provider 或 modelId 参数");
     }
-    return MNIAIService.test(payload.provider, payload.modelId);
+    // probeReasoning: true 时额外探测模型是否支持思考（返回 supportsReasoning）
+    return MNIAIService.test(payload.provider, payload.modelId, !!payload.probeReasoning);
   }
 
   function fetchModels(context, payload) {
@@ -74,6 +75,22 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATFlow.explainWithAI();
   }
 
+  // 解析单词发音 URL（AI 解释结果工具栏的手动发音按钮）：
+  // 按「AI 解释发音」配置选择有道/海词/必应，accent 传 uk | us；
+  // 返回 { url, fallbacks }，fallbacks 为回退链（小写词/另一口音，播放失败时前端依次尝试）
+  function getPronounceURL(context, payload) {
+    if (!payload || !payload.word) {
+      throw new Error("缺少 word 参数");
+    }
+    var accent = payload.accent === "uk" ? "uk" : "us";
+    return MNIATFlow.resolvePronounceURL(payload.word, accent).then(function (r) {
+      return {
+        url: (r && r.url) || "",
+        fallbacks: (r && Array.isArray(r.fallbacks) ? r.fallbacks : []).filter(function (u) { return !!u; })
+      };
+    });
+  }
+
   // 卡片前端测量内容高度后上报，插件侧钳制并调整 WebView 高度
   function resizeCard(context, payload) {
     if (context.kind === "card" && payload && typeof payload.height === "number") {
@@ -103,6 +120,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     closeCard,
     copyText,
     explainWithAI,
+    getPronounceURL,
     resizeCard,
     closePanel,
   };

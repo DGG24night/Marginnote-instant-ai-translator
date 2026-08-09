@@ -656,6 +656,23 @@ html.card-fit .card-body {
   color: var(--text);
 }
 
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: transparent;
+}
+
+/* 发音提示条（口音自动回退 / 发音不可用） */
+.pronounce-hint {
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
 .card-source {
   padding: 8px 12px;
   font-size: 12px;

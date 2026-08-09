@@ -5,6 +5,8 @@ JSB.require("SettingsStore");
 JSB.require("PromptTemplates");
 JSB.require("AIService");
 JSB.require("YoudaoService");
+JSB.require("BingDictionaryService");
+JSB.require("HaiCiDictionaryService");
 JSB.require("FloatingCardController");
 JSB.require("TranslateFlow");
 JSB.require("SelectionMonitor");

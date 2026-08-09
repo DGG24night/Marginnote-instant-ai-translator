@@ -80,6 +80,8 @@ const EMPTY_CONFIG = {
   fontSize: "medium",
   pronounceAuto: true,
   pronounceAccent: "us",
+  lookupProvider: "youdao", // youdao | bing | haici | ai（查词服务提供商）
+  aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   rememberCardSize: false,
   providers: [],
   routing: {

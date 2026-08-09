@@ -23,12 +23,67 @@ var MNIATFlow = (function () {
       onDone: function (full) {
         if (full && full.trim().length > 0) {
           pushEvent({ type: "translateResult", text: full });
+          // 「查词服务 = AI 解释」场景：AI 返回后按设置用词典朗读该单词
+          speakAIExplainWord(job, promptKind);
         } else {
           pushEvent({ type: "error", message: "AI 返回为空，请检查提供商配置或稍后重试" });
         }
       },
       onError: function (message) {
         pushEvent({ type: "error", message: message });
+      }
+    });
+  }
+
+  // 解析单词发音 URL（首选 + 回退链）：
+  // 按「AI 解释发音」配置选择词典（有道同步 / 海词、必应需解析页面异步）。
+  // 供 AI 解释自动发音与工具栏手动发音按钮（bridge getPronounceURL）共用。
+  // 返回 { url, fallbacks }：url 为首选，fallbacks 为备选列表（依次尝试）。
+  // 有道特例：dictvoice 对首字母大写词可能返回 500（如 Desolvation），小写正常，
+  // 故回退链包含「小写词」与「另一口音」。
+  function resolvePronounceURL(word, preferredAccent) {
+    var config = MNIATSettings.load();
+    var source = config.aiExplainPronounce || "youdao";
+    var accent = preferredAccent === "uk" ? "uk" : "us";
+    var other = accent === "uk" ? "us" : "uk";
+
+    if (source === "youdao") {
+      var lower = String(word).toLowerCase();
+      return Promise.resolve({
+        url: MNIATYoudao.pronounceURL(word, accent),
+        fallbacks: [
+          MNIATYoudao.pronounceURL(lower, accent),   // 大写 500 时用小写重试
+          MNIATYoudao.pronounceURL(lower, other)     // 再不行换另一口音
+        ]
+      });
+    }
+    var promise = source === "bing" ? MNIATBing.lookup(word) : MNIATHaiCi.lookup(word);
+    return promise.then(function (result) {
+      if (!result) return { url: "", fallbacks: [] };
+      var url = accent === "uk" ? (result.ukMp3 || "") : (result.usMp3 || "");
+      var otherUrl = other === "uk" ? (result.ukMp3 || "") : (result.usMp3 || "");
+      return { url: url, fallbacks: otherUrl ? [otherUrl] : [] };
+    }).catch(function () {
+      return { url: "", fallbacks: [] };
+    });
+  }
+
+  // AI 解释（lookupProvider=ai）返回后自动发音：
+  // 按「AI 解释发音」配置选择有道/海词/必应，口音遵循「发音口音」（uk/us），
+  // 并遵循「查词自动发音」开关（用户要求发音跟随该开关）；
+  // 仅对 startJob 的 AI 分支（job.mode === "explain"）生效，
+  // 词典卡手动切换 AI 解释（explainWithAI，mode 仍为 lookup）不触发。
+  function speakAIExplainWord(job, promptKind) {
+    if (promptKind !== "explain" || !job || job.mode !== "explain") return;
+    var config = MNIATSettings.load();
+    if (config.lookupProvider !== "ai") return;
+    if (!config.pronounceAuto) return;
+    var word = String(job.text || "").trim();
+    if (!word) return;
+    var accent = config.pronounceAccent === "uk" ? "uk" : "us";
+    resolvePronounceURL(word, accent).then(function (r) {
+      if (r && r.url) {
+        pushEvent({ type: "speak", url: r.url, fallbacks: r.fallbacks || [], accent: accent });
       }
     });
   }
@@ -61,15 +116,55 @@ var MNIATFlow = (function () {
 
     startJob: function (job) {
       if (job.mode === "lookup") {
+        var config = MNIATSettings.load();
+        var lookupProvider = config.lookupProvider || "youdao"; // youdao | bing | haici | ai
+
+        // 查词服务配置为「AI 解释」时，直接走 AI（使用 lookup 路由 + explain prompt）
+        if (lookupProvider === "ai") {
+          job.mode = "explain"; // 标记为 AI 解释任务（触发返回后自动发音；词典卡手动切换不触发）
+          pushEvent({ type: "loading", mode: "explain", text: job.text });
+          runAI(job, "lookup", "explain");
+          return;
+        }
+
         pushEvent({ type: "loading", mode: "lookup", text: job.text });
-        MNIATYoudao.lookup(job.text.trim()).then(function (result) {
+
+        // 按配置分发到对应词典服务
+        var lookupPromise = null;
+        if (lookupProvider === "bing") {
+          lookupPromise = MNIATBing.lookup(job.text.trim());
+        } else if (lookupProvider === "haici") {
+          lookupPromise = MNIATHaiCi.lookup(job.text.trim());
+        } else {
+          lookupPromise = MNIATYoudao.lookup(job.text.trim());
+        }
+
+        lookupPromise.then(function (result) {
           if (currentJob !== job) return; // 已被新任务取代
-          var config = MNIATSettings.load();
+          var cfg = MNIATSettings.load();
+          var uk = "";
+          var us = "";
+          if (lookupProvider === "bing" || lookupProvider === "haici") {
+            // 必应/海词：解析结果自带英美发音链接
+            uk = result.ukMp3 || "";
+            us = result.usMp3 || "";
+          } else {
+            uk = MNIATYoudao.pronounceURL(job.text.trim(), "uk");
+            us = MNIATYoudao.pronounceURL(job.text.trim(), "us");
+          }
           result.pronounce = {
-            uk: MNIATYoudao.pronounceURL(job.text.trim(), "uk"),
-            us: MNIATYoudao.pronounceURL(job.text.trim(), "us"),
-            auto: config.pronounceAuto,
-            accent: config.pronounceAccent
+            uk: uk,
+            us: us,
+            // 有道 dictvoice 对首字母大写词可能 500（如 Desolvation），小写正常，
+            // 提供小写兜底供前端回退
+            ukFallback: lookupProvider === "youdao"
+              ? MNIATYoudao.pronounceURL(job.text.trim().toLowerCase(), "uk")
+              : "",
+            usFallback: lookupProvider === "youdao"
+              ? MNIATYoudao.pronounceURL(job.text.trim().toLowerCase(), "us")
+              : "",
+            auto: cfg.pronounceAuto,
+            accent: cfg.pronounceAccent
           };
           pushEvent({ type: "dictResult", data: result });
         }).catch(function (err) {
@@ -105,6 +200,9 @@ var MNIATFlow = (function () {
 
     hasJob: function () {
       return !!currentJob;
-    }
+    },
+
+    // 供 bridge 命令调用：解析单词发音 URL（工具栏手动发音按钮）
+    resolvePronounceURL: resolvePronounceURL
   };
 })();

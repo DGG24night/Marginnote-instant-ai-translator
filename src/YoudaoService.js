@@ -17,6 +17,22 @@ var MNIATYoudao = (function () {
       encodeURIComponent(word) + "&type=" + type;
   }
 
+  // 有道接口偶发混入的脏数据/异常提示（间歇性出现，2026-08-09 用户实测触发），
+  // 释义中出现时直接删除，避免污染查词结果。
+  // 例如 "we are pirates, these data are stolen from youdao"（疑似接口异常提示）。
+  var JUNK_PATTERNS = [
+    /we\s+are\s+pirates[^；;。]*/gi,
+    /these\s+data\s+are\s+stolen\s+from\s+youdao/gi
+  ];
+
+  function cleanJunk(text) {
+    var out = String(text || "");
+    JUNK_PATTERNS.forEach(function (re) {
+      out = out.replace(re, "");
+    });
+    return out.replace(/\s{2,}/g, " ").replace(/^[；;\s]+|[；;\s]+$/g, "").trim();
+  }
+
   // 从 jsonapi_s 响应中提取结构化词条，尽量容错
   // 实测结构（2026-08-07 用 curl 验证）：
   //   ec.word = { ukphone, usphone, trs: [{ pos, tran }] }  ← 扁平结构，不是 tr[0].l.i
@@ -46,14 +62,20 @@ var MNIATYoudao = (function () {
             if (!tr) return;
             // 扁平结构：{ pos, tran }
             if (tr.tran) {
-              result.translations.push({ pos: tr.pos || "", meaning: String(tr.tran) });
+              var cleanTran = cleanJunk(tr.tran);
+              if (cleanTran) {
+                result.translations.push({ pos: tr.pos || "", meaning: cleanTran });
+              }
               return;
             }
             // 兼容旧结构：{ tr: [{ l: { i: [...] } }] }
             var item = tr.tr && tr.tr[0];
             var li = item && item.l && item.l.i && item.l.i[0];
             if (li) {
-              result.translations.push({ pos: tr.pos || "", meaning: String(li) });
+              var cleanLi = cleanJunk(li);
+              if (cleanLi) {
+                result.translations.push({ pos: tr.pos || "", meaning: cleanLi });
+              }
             }
           });
         }
@@ -65,7 +87,10 @@ var MNIATYoudao = (function () {
         if (Array.isArray(webTrans) && webTrans[0] && Array.isArray(webTrans[0].trans)) {
           webTrans[0].trans.forEach(function (t) {
             if (t && t.value) {
-              result.translations.push({ pos: "网络", meaning: String(t.value) });
+              var cleanValue = cleanJunk(t.value);
+              if (cleanValue) {
+                result.translations.push({ pos: "网络", meaning: cleanValue });
+              }
             }
           });
         }
@@ -77,7 +102,10 @@ var MNIATYoudao = (function () {
         if (ceEntry && ceEntry.trs) {
           ceEntry.trs.forEach(function (tr) {
             if (tr && tr.tran) {
-              result.translations.push({ pos: tr.pos || "", meaning: String(tr.tran) });
+              var cleanCe = cleanJunk(tr.tran);
+              if (cleanCe) {
+                result.translations.push({ pos: tr.pos || "", meaning: cleanCe });
+              }
             }
           });
         }

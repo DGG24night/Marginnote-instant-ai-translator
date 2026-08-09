@@ -20,6 +20,8 @@ var MNIATSettings = (function () {
       fontSize: "medium",           // small | medium | large
       pronounceAuto: true,          // 查词后自动发音
       pronounceAccent: "us",        // uk | us
+      lookupProvider: "youdao",     // youdao | bing | haici | ai（查词服务提供商；ai = 直接用 AI 解释）
+      aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {

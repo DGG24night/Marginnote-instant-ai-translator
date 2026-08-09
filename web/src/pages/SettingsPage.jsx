@@ -80,15 +80,27 @@ function ProviderCard({ provider }) {
       if (target) mutator(target);
     });
 
-  // 测试指定模型：走插件侧 MNIAIService.test（POST {baseURL}/chat/completions 最小请求）
+  // 测试指定模型：连通性 + 思考能力探测（probeReasoning）
+  // 走插件侧 MNIAIService.test：先 POST {baseURL}/chat/completions 最小请求验证连通，
+  // 再发一次带思考参数的请求判断模型是否支持推理，结果自动更新「支持推理」标记
   const runTest = async (modelId) => {
     if (!modelId || testing || bulkTesting) return;
     setTesting(true);
     setTestingModel(modelId);
     setTestResult(null);
     try {
-      const result = await MNBridge.send("testProvider", { provider, modelId });
+      const result = await MNBridge.send("testProvider", { provider, modelId, probeReasoning: true });
       setTestResult({ modelId, ...result });
+      // 探测到明确结论时，自动更新该模型的「支持推理」标记
+      if (result && typeof result.supportsReasoning === "boolean") {
+        const sr = result.supportsReasoning;
+        patch((p) => {
+          const target = p.models.find((m) => m.id === modelId);
+          if (target && !!target.supportsReasoning !== sr) {
+            target.supportsReasoning = sr;
+          }
+        });
+      }
     } catch (error) {
       setTestResult({ modelId, ok: false, message: String((error && error.message) || error) });
     } finally {
@@ -97,26 +109,47 @@ function ProviderCard({ provider }) {
     }
   };
 
-  // 批量测试：逐个测试该供应商下所有已填 ID 的模型，结果实时写入 bulkResults
+  // 批量测试：逐个测试该供应商下所有已填 ID 的模型，结果实时写入 bulkResults。
+  // 与单模型测试一致，附带推理能力探测（probeReasoning），结束后统一更新「支持推理」标记
   const runBulkTest = async () => {
     const targets = provider.models.filter((m) => m && String(m.id).trim());
     if (targets.length === 0 || bulkTesting) return;
     setBulkTesting(true);
     setBulkResults({});
+    const detected = {}; // modelId -> supportsReasoning（批量结束后一次保存）
     for (const model of targets) {
       const modelId = String(model.id).trim();
       try {
-        const result = await MNBridge.send("testProvider", { provider, modelId });
+        const result = await MNBridge.send("testProvider", { provider, modelId, probeReasoning: true });
         setBulkResults((prev) => ({
           ...prev,
-          [modelId]: result.ok ? { ok: true } : { ok: false, message: result.message || "连接失败" },
+          [modelId]: {
+            ok: result.ok,
+            message: result.message || "连接失败",
+            supportsReasoning: result.supportsReasoning,
+          },
         }));
+        if (typeof result.supportsReasoning === "boolean") {
+          detected[modelId] = result.supportsReasoning;
+        }
       } catch (error) {
         setBulkResults((prev) => ({
           ...prev,
-          [modelId]: { ok: false, message: String((error && error.message) || error) },
+          [modelId]: { ok: false, message: String((error && error.message) || error), supportsReasoning: null },
         }));
       }
+    }
+    // 探测到明确结论时，统一更新标记（一次持久化）
+    const keys = Object.keys(detected);
+    if (keys.length > 0) {
+      patch((p) => {
+        keys.forEach((id) => {
+          const t = p.models.find((m) => m.id === id);
+          if (t && !!t.supportsReasoning !== detected[id]) {
+            t.supportsReasoning = detected[id];
+          }
+        });
+      });
     }
     setBulkTesting(false);
   };
@@ -163,6 +196,7 @@ function ProviderCard({ provider }) {
       const existing = new Set(target.models.map((m) => m.id));
       chosen.forEach((m) => {
         if (!existing.has(m)) {
+          // 推理能力不在列表阶段判断，统一由「测试」时的探测确认，此处默认不支持
           target.models.push({ id: m, supportsReasoning: false });
           existing.add(m);
         }
@@ -177,7 +211,7 @@ function ProviderCard({ provider }) {
 
   // 搜索过滤（不区分大小写）
   const filteredModels = modelQuery.trim()
-    ? modelsList.filter((m) => m.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+    ? modelsList.filter((m) => String(m).toLowerCase().includes(modelQuery.trim().toLowerCase()))
     : modelsList;
 
   return (
@@ -303,6 +337,9 @@ function ProviderCard({ provider }) {
                   {testResult.ok
                     ? `✓ ${testResult.modelId} 连接成功`
                     : `✗ ${testResult.modelId}：${testResult.message || "连接失败"}`}
+                  {testResult.ok && testResult.supportsReasoning === true && "（支持推理，已更新）"}
+                  {testResult.ok && testResult.supportsReasoning === false && "（不支持推理，已更新）"}
+                  {testResult.ok && testResult.supportsReasoning === null && "（无法探测推理能力）"}
                 </span>
               </div>
             )}
@@ -337,6 +374,9 @@ function ProviderCard({ provider }) {
                         <span className="bulk-result-id" title={m.id}>{m.id}</span>
                         <span className="bulk-result-msg">
                           {r.ok ? "连接成功" : r.message || "连接失败"}
+                          {r.ok && r.supportsReasoning === true && "（支持推理）"}
+                          {r.ok && r.supportsReasoning === false && "（不支持推理）"}
+                          {r.ok && r.supportsReasoning === null && "（无法探测推理）"}
                         </span>
                       </div>
                     );
@@ -608,6 +648,40 @@ function SettingsPage() {
                 </select>
               </Field>
 
+              <Field label="查词服务提供商">
+                <select
+                  className="input"
+                  value={config.lookupProvider || "youdao"}
+                  onChange={(e) => update((c) => { c.lookupProvider = e.target.value; })}
+                >
+                  <option value="youdao">有道词典</option>
+                  <option value="bing">必应词典</option>
+                  <option value="haici">海词词典</option>
+                  <option value="ai">AI 解释（调用 AI）</option>
+                </select>
+                <span className="field-hint">
+                  划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。
+                </span>
+              </Field>
+
+              <Field label="AI 解释发音">
+                <select
+                  className="input"
+                  value={config.aiExplainPronounce || "youdao"}
+                  disabled={config.lookupProvider !== "ai"}
+                  onChange={(e) => update((c) => { c.aiExplainPronounce = e.target.value; })}
+                >
+                  <option value="youdao">有道词典</option>
+                  <option value="haici">海词词典</option>
+                  <option value="bing">必应词典</option>
+                </select>
+                <span className="field-hint">
+                  {config.lookupProvider === "ai"
+                    ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
+                    : "需将「查词服务提供商」选为「AI 解释」后生效。"}
+                </span>
+              </Field>
+
               <Field label="主题">
                 <select
                   className="input"
@@ -660,7 +734,7 @@ function SettingsPage() {
                     checked={!!config.rememberCardSize}
                     onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
                   />
-                  结果卡片记住上次手动调整的大小（默认关闭）
+                  {config.rememberCardSize ? "开启" : "关闭"}
                 </label>
               </Field>
             </div>

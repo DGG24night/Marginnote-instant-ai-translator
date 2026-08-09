@@ -24,6 +24,15 @@ var MNIAIService = (function () {
     return /bigmodel\.cn/.test(String(provider.baseURL || "").toLowerCase());
   }
 
+  // 在 provider.models 中查找模型配置（含 supportsReasoning 标记）
+  function modelOf(provider, modelId) {
+    var models = provider && Array.isArray(provider.models) ? provider.models : [];
+    for (var i = 0; i < models.length; i++) {
+      if (models[i] && models[i].id === modelId) return models[i];
+    }
+    return null;
+  }
+
   function buildBody(provider, modelId, route, prompt) {
     var body = {
       model: modelId,
@@ -33,8 +42,16 @@ var MNIAIService = (function () {
     if (typeof route.temperature === "number") {
       body.temperature = route.temperature;
     }
+    // 关键修复：模型明确标记「不支持推理」时，绝不发送任何思考相关参数。
+    // 部分厂商（如百炼 Qwen 非推理款）对 enable_thinking 参数直接 400：
+    //   {"code":20015,"message":"...model does not support parameter `enable_thinking`."}
+    // 即使值为 false 也会报错，所以这里整段跳过。
+    var model = modelOf(provider, modelId);
+    var supportsReasoning = model ? model.supportsReasoning : undefined;
     var effort = route.reasoningEffort || "off";
-    if (isQwenStyle(provider, modelId)) {
+    if (supportsReasoning === false) {
+      // 不发送任何思考参数
+    } else if (isQwenStyle(provider, modelId)) {
       body.enable_thinking = effort !== "off";
     } else if (isZhipuStyle(provider)) {
       body.thinking = { type: effort === "off" ? "disabled" : "enabled" };
@@ -121,9 +138,12 @@ var MNIAIService = (function () {
       return { cancel: function () {} };
     },
 
-    // 连通性测试：最小请求验证 baseURL/apiKey/model 可用
-    test: function (provider, modelId) {
-      var body = {
+    // 连通性测试：最小请求验证 baseURL/apiKey/model 可用。
+    // probeReasoning=true 时，连通后再发一次带思考参数的请求探测模型是否支持思考，
+    // 返回 supportsReasoning: true | false | null（null = 无法判断，如 429/5xx/超时）。
+    test: function (provider, modelId, probeReasoning) {
+      var self = this;
+      var basic = {
         model: modelId,
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
@@ -132,17 +152,62 @@ var MNIAIService = (function () {
       return MNNetwork.fetch(endpointOf(provider), {
         method: "POST",
         headers: headersOf(provider),
-        json: body,
+        json: basic,
         timeout: 15
       }).then(function (res) {
         if (res.status >= 200 && res.status < 300) {
-          return { ok: true, status: res.status };
+          if (!probeReasoning) {
+            return { ok: true, status: res.status, supportsReasoning: null };
+          }
+          // 思考能力探测：多一次带思考参数的请求
+          return MNNetwork.fetch(endpointOf(provider), {
+            method: "POST",
+            headers: headersOf(provider),
+            json: self.buildProbeBody(provider, modelId),
+            timeout: 15
+          }).then(function (res2) {
+            if (res2.status >= 200 && res2.status < 300) {
+              return { ok: true, status: res.status, supportsReasoning: true };
+            }
+            var msg = extractError(res2.status, res2);
+            var detected = self.detectReasoningFromError(msg);
+            return { ok: true, status: res.status, supportsReasoning: detected, probeMessage: msg };
+          });
         }
         return { ok: false, status: res.status, message: extractError(res.status, res) };
       });
     },
 
-    // 获取模型列表：GET {baseURL}/models（OpenAI 兼容），返回模型 id 数组
+    // 思考能力探测请求体（按厂商风格选择参数）
+    buildProbeBody: function (provider, modelId) {
+      var body = {
+        model: modelId,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+        stream: false
+      };
+      if (isQwenStyle(provider, modelId)) {
+        body.enable_thinking = true;
+      } else if (isZhipuStyle(provider)) {
+        body.thinking = { type: "enabled" };
+      } else {
+        body.reasoning_effort = "low";
+      }
+      return body;
+    },
+
+    // 从探测请求的错误信息判断是否「不支持思考参数」；无法判断返回 null
+    detectReasoningFromError: function (message) {
+      var m = String(message || "").toLowerCase();
+      if (/does not support|not support|not supported|unsupported|unknown parameter|unknown field|invalid parameter|invalid field|is not supported|enable_thinking|reasoning_effort|'thinking'|thinking.*(not|invalid|unknown)/.test(m)) {
+        return false;
+      }
+      return null;
+    },
+
+    // 获取模型列表：GET {baseURL}/models（OpenAI 兼容）
+    // 返回 { models: [id 字符串数组] }。推理能力不在列表阶段判断（启发式不可靠），
+    // 统一由「测试」时的思考参数探测（probeReasoning）确认。
     fetchModels: function (baseURL, apiKey) {
       var url = String(baseURL || "").trim().replace(/\/+$/, "") + "/models";
       return MNNetwork.fetch(url, {
