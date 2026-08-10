@@ -34,6 +34,32 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATPrompts.defaults;
   }
 
+  // ---------- 配置备份与同步 ----------
+
+  // 导出：写临时文件并弹出系统保存面板，返回 { ok, bytes, fileName }
+  function exportConfig() {
+    return MNIATConfigSync.exportConfig();
+  }
+
+  // 导出（剪贴板方式）：配置 JSON 写入系统剪贴板，返回 { ok, bytes }
+  function exportConfigToClipboard() {
+    return MNIATConfigSync.exportConfigToClipboard();
+  }
+
+  // 导入（粘贴方式）：payload.json 为配置文本；整体覆盖（导入前自动备份 config.backup.json）
+  function importConfig(context, payload) {
+    var text = payload && payload.json;
+    if (!text || typeof text !== "string" || !text.trim()) {
+      throw new Error("缺少导入的配置内容");
+    }
+    return MNIATConfigSync.importConfig(text);
+  }
+
+  // 导入（文件方式）：弹系统文件选择器，选中配置 JSON 后读取导入
+  function importConfigFromFile(context) {
+    return MNIATConfigSync.importConfigFromFile(context);
+  }
+
   function testProvider(context, payload) {
     if (!payload || !payload.provider || !payload.modelId) {
       throw new Error("缺少 provider 或 modelId 参数");
@@ -60,6 +86,19 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     MNIATFlow.cancelCurrent();
     MNIATFloatingCard.hide();
     return { closed: true };
+  }
+
+  // 图钉固定状态（工具栏图钉按钮）：true = 固定，点击卡片外部不关闭
+  function setCardPinned(context, payload) {
+    return MNIATFloatingCard.setPinned(!!(payload && payload.pinned));
+  }
+
+  // 卡片 WebView 失焦（用户点击卡片外部）→ 未固定时关闭卡片（blur 方案）
+  function cardLostFocus(context) {
+    if (context.kind === "card") {
+      MNIATFloatingCard.cardLostFocus();
+    }
+    return { handled: true };
   }
 
   function copyText(context, payload) {
@@ -114,10 +153,16 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     getConfig,
     saveConfig,
     getDefaultPrompts,
+    exportConfig,
+    exportConfigToClipboard,
+    importConfig,
+    importConfigFromFile,
     testProvider,
     fetchModels,
     cardReady,
     closeCard,
+    setCardPinned,
+    cardLostFocus,
     copyText,
     explainWithAI,
     getPronounceURL,

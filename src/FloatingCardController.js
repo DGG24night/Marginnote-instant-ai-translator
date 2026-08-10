@@ -26,6 +26,10 @@ var MNIATFloatingCard = (function () {
   var pendingTrigger = null; // { win, text, rect }
   var addonMainPath = null;
 
+  // 图钉固定状态：pinned = true 时点击卡片外部不自动关闭（工具栏图钉按钮切换）
+  var pinned = false;
+  var focusTimer = null; // 延迟聚焦 NSTimer（页面加载后让卡片 WebView 成为 firstResponder）
+
   // 悬浮按钮点击目标（类只定义一次，实例随按钮创建）
   var triggerTapTargetClass = JSB.defineClass("MNIATTriggerTapTarget : NSObject", {
     onTap: function () {
@@ -36,6 +40,29 @@ var MNIATFloatingCard = (function () {
       }
     }
   });
+
+  // 点击卡片外部自动关闭：blur（焦点）方案。
+  // 背景：macOS 上文档区/卡片都是 UIWebView，会吞掉区域内的鼠标事件，任何覆盖在文档上的
+  //       透明垫层都会连带拦截滚轮（UIButton/UIView 均实测失效），无法两全。
+  // 方案：卡片显示时让卡片 WebView 成为 firstResponder（becomeFirstResponder，cookbook 有示例），
+  //       前端监听 window blur——点击外部（文档/侧栏）→ WebView 失焦 → blur → 通知插件关闭；
+  //       滚轮滚动文档不改变焦点 → 滚动照常；点击卡片内 → WebView 保持焦点 → 不误关。
+  // 仅卡片可见且未固定（pinned=false）时关闭卡片。
+  function requestCardFocus() {
+    if (!controller || !controller._webView) return;
+    try {
+      controller._webView.becomeFirstResponder();
+    } catch (e) { /* 忽略：聚焦失败时 blur 可能不触发，属环境限制 */ }
+  }
+
+  // 前端 window blur 通知：未固定则关闭卡片
+  function onLostFocus() {
+    if (!controller || !controller.view || !controller.view.superview) return;
+    if (pinned) return; // 图钉固定：失焦不关闭
+    console.log("[MNIATCard] lost focus -> hide");
+    MNIATFlow.cancelCurrent();
+    MNIATFloatingCard.hide();
+  }
 
   // ---------- 工具 ----------
 
@@ -211,6 +238,8 @@ var MNIATFloatingCard = (function () {
     webViewDidFinishLoad: function () {
       self._loaded = true;
       console.log("[MNIATCard] page loaded");
+      // 页面加载完成后再尝试聚焦（blur 方案需要 WebView 持有焦点）
+      requestCardFocus();
     },
 
     webViewDidFailLoadWithError: function (webView, error) {
@@ -340,11 +369,28 @@ var MNIATFloatingCard = (function () {
       }
 
       var savedSize = rememberSizeEnabled() ? loadCardSize() : null;
-      applyCardFrame(c, computeFrame(anchorRect, studyController.view.bounds, savedSize), false);
+      // 图钉固定且开启「不跟随划词位置」：保留卡片当前位置（宽度/高度不变，仅跳过重新定位）
+      var pinStaysEnabled = pinned && !!(MNIATSettings.load().pinStays);
+      if (!pinStaysEnabled) {
+        applyCardFrame(c, computeFrame(anchorRect, studyController.view.bounds, savedSize), false);
+      }
       if (!c.view.superview) {
         studyController.view.addSubview(c.view);
       }
       c.view.hidden = false;
+      // blur 方案：让卡片 WebView 持有焦点，前端失焦（点击外部）时通知关闭。
+      // 立即聚焦 + 延迟再聚焦（页面/窗口就绪后），提高聚焦成功率
+      requestCardFocus();
+      if (focusTimer) {
+        focusTimer.invalidate();
+        focusTimer = null;
+      }
+      focusTimer = NSTimer.scheduledTimerWithTimeInterval(0.5, false, function () {
+        focusTimer = null;
+        if (controller && controller.view && controller.view.superview) {
+          requestCardFocus();
+        }
+      });
 
       if (c._loaded) {
         // 页面已加载：复用，前端不会再次发 cardReady，直接重启任务
@@ -383,6 +429,11 @@ var MNIATFloatingCard = (function () {
     },
 
     hide: function () {
+      if (focusTimer) {
+        focusTimer.invalidate();
+        focusTimer = null;
+      }
+      pinned = false; // 卡片隐藏后解除固定（下次出现默认可点击外部关闭）
       if (controller && controller.view && controller.view.superview) {
         controller.view.removeFromSuperview();
       }
@@ -399,6 +450,21 @@ var MNIATFloatingCard = (function () {
 
     isVisible: function () {
       return !!(controller && controller.view && controller.view.superview);
+    },
+
+    // 前端 window blur（卡片 WebView 失焦，即点击卡片外部）通知：未固定则关闭
+    cardLostFocus: function () {
+      onLostFocus();
+      return { closed: true };
+    },
+
+    // 图钉固定状态：true = 固定（点击卡片外部不自动关闭）；false = 默认（点击外部关闭）
+    setPinned: function (value) {
+      pinned = !!value;
+      // 固定状态变化后重新聚焦 WebView：点击图钉按钮（可聚焦 DOM 元素）可能让窗口焦点
+      // 脱离卡片，导致之后点外部不再触发 blur（bug：取消固定后点外部不关闭）。
+      requestCardFocus();
+      return { pinned: pinned };
     },
 
     // ---------- 悬浮触发按钮（triggerMode = button） ----------

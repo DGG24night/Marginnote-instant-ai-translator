@@ -24,6 +24,7 @@ var MNIATSettings = (function () {
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing
       streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
+      pinStays: true,               // 图钉固定后：卡片停留在当前位置，不跟随划词位置（默认开启）
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
@@ -120,6 +121,9 @@ var MNIATSettings = (function () {
     },
 
     defaults: defaultConfig,
+
+    // 用默认值补齐缺字段（导入配置时校验/归一化用）
+    normalize: withDefaults,
 
     // 便捷：按用途（translate/lookup）解析提供商与模型
     resolveRoute: function (kind) {

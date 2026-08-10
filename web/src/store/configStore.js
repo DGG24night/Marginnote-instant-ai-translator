@@ -68,6 +68,27 @@ export const PROVIDER_PRESETS = [
       { id: "glm-4-air", supportsReasoning: false },
     ],
   },
+  {
+    name: "火山引擎",
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+    models: [
+      { id: "doubao-seed-1-6-250615", supportsReasoning: true },
+      { id: "doubao-seed-1-6-flash-250615", supportsReasoning: true },
+      { id: "doubao-1-5-pro-32k-250115", supportsReasoning: true },
+      { id: "doubao-1-5-lite-32k-250115", supportsReasoning: false },
+    ],
+  },
+  {
+    name: "蚂蚁百灵",
+    baseURL: "https://api.ant-ling.com/v1",
+    models: [
+      { id: "Ling-3.0-flash", supportsReasoning: true },
+      { id: "Ling-3.0-tiny", supportsReasoning: false },
+      { id: "Ling-2.6-1T", supportsReasoning: false },
+      { id: "Ling-2.6-flash", supportsReasoning: false },
+      { id: "Ring-2.6-1T", supportsReasoning: true },
+    ],
+  },
   { name: "自定义（OpenAI 兼容）", baseURL: "", models: [] },
 ];
 
@@ -84,6 +105,7 @@ const EMPTY_CONFIG = {
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
+  pinStays: true, // 图钉固定后：卡片停留在当前位置，不跟随划词位置
   providers: [],
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
@@ -162,5 +184,33 @@ export const useConfigStore = create((set, get) => ({
         }
       });
     });
+  },
+
+  // 导出配置：插件层写入临时文件并弹出系统保存面板
+  exportConfig: async () => {
+    return MNBridge.send("exportConfig");
+  },
+
+  // 导出配置（剪贴板方式）：插件层把配置 JSON 写入系统剪贴板
+  exportConfigToClipboard: async () => {
+    return MNBridge.send("exportConfigToClipboard");
+  },
+
+  // 导入配置（粘贴文本）：整体覆盖（插件层导入前自动备份）；成功后重新加载本地状态
+  importConfig: async (jsonText) => {
+    const result = await MNBridge.send("importConfig", { json: jsonText });
+    if (result && result.ok) {
+      await get().load();
+    }
+    return result;
+  },
+
+  // 导入配置（文件方式）：弹系统文件选择器，选中配置文件后导入
+  importConfigFromFile: async () => {
+    const result = await MNBridge.send("importConfigFromFile");
+    if (result && result.ok) {
+      await get().load();
+    }
+    return result;
   },
 }));

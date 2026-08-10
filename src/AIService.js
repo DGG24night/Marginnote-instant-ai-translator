@@ -16,9 +16,13 @@ var MNIAIService = (function () {
     return base + "/chat/completions";
   }
 
-  // 思考模式适配（2026-08-09 按"提供商 + 模型 ID"细分）：
+  // 思考模式适配（2026-08-09 按"提供商 + 模型 ID"细分；2026-08-10 新增火山/蚂蚁百灵）：
   //
   //   ┌─────────────────┬───────────────────────────────────────────────┐
+  //   │ doubao 模型     │ 任何供应商托管的 doubao 均优先命中（火山方舟    │
+  //   │ (modelId^doubao)│ 官方 + 百炼/SiliconFlow/自定义等）：           │
+  //   │                 │ thinking.type=disabled|enabled 控制开关        │
+  //   ├─────────────────┼───────────────────────────────────────────────┤
   //   │ DeepSeek 官方   │ thinking.type=disabled|enabled 控制开关；          │
   //   │ (.deepseek.com) │ 开启时辅以 reasoning_effort=low|medium|high       │
   //   ├─────────────────┼───────────────────────────────────────────────┤
@@ -26,6 +30,11 @@ var MNIAIService = (function () {
   //   │ (.moonshot.cn)  │   关闭→low（k3 始终思考，无 none）；medium→high  │
   //   │                 │ kimi-k2.7-code/-code-highspeed → 始终 enabled   │
   //   │                 │ kimi-k2.5 / kimi-k2.6 / 其他 → thinking.type     │
+  //   ├─────────────────┼───────────────────────────────────────────────┤
+  //   │ 蚂蚁百灵        │ Ling-3.0-flash → thinking.type: enabled|disabled│
+  //   │ (.ant-ling.com) │ Ring-2.6-1T → reasoning.effort: high|xhigh      │
+  //   │                 │   （始终推理，无关闭选项，映射为 high）          │
+  //   │                 │ 其余 Ling 模型 → 不发任何思考参数               │
   //   ├─────────────────┼───────────────────────────────────────────────┤
   //   │ 智谱 bigmodel.cn│ thinking.type: enabled | disabled              │
   //   ├─────────────────┼───────────────────────────────────────────────┤
@@ -75,6 +84,27 @@ var MNIAIService = (function () {
     return /deepseek/i.test(String(modelId || "").trim());
   }
 
+  // doubao 模型（火山方舟官方，或其他供应商托管的 doubao）
+  // 火山方舟文档：所有 doubao 模型均用 thinking 对象控制深度思考开关
+  function isDoubaoModel(modelId) {
+    return /^doubao/i.test(String(modelId || "").trim());
+  }
+
+  // 蚂蚁百灵（api.ant-ling.com）
+  function isAntLingStyle(provider) {
+    return /ant-ling\.com/.test(String(provider.baseURL || "").toLowerCase());
+  }
+
+  // 蚂蚁百灵 Ling-3.0-flash：thinking.type 控制思考开关（唯一支持 thinking 的 Ling 模型）
+  function isLing30Flash(modelId) {
+    return /^ling-3\.0-flash/i.test(String(modelId || "").trim());
+  }
+
+  // 蚂蚁百灵 Ring-2.6-1T：reasoning.effort 控制推理深度（唯一支持 reasoning 的模型，始终推理）
+  function isRing26(modelId) {
+    return /^ring-2\.6/i.test(String(modelId || "").trim());
+  }
+
   // 在 provider.models 中查找模型配置（含 supportsReasoning 标记）
   function modelOf(provider, modelId) {
     var models = provider && Array.isArray(provider.models) ? provider.models : [];
@@ -94,6 +124,13 @@ var MNIAIService = (function () {
     if (supportsReasoning === false) return {};
 
     var mid = String(modelId || "").trim();
+
+    // 0. doubao 模型（火山方舟官方 + 其他供应商托管的 doubao）：
+    //    统一用 thinking.type 控制深度思考开关（火山方舟文档：enabled/disabled/auto，
+    //    用户设置无 auto，故映射 enabled/disabled 两档）
+    if (isDoubaoModel(mid)) {
+      return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
+    }
 
     // 1. DeepSeek 官方：双参数（开关 + 强度）
     if (isDeepSeekStyle(provider)) {
@@ -121,12 +158,27 @@ var MNIAIService = (function () {
       }
     }
 
-    // 3. 智谱：thinking.type
+    // 3. 蚂蚁百灵（api.ant-ling.com）：
+    //    Ling-3.0-flash → thinking.type（文档：仅此模型支持 thinking）
+    //    Ring-2.6-1T   → reasoning.effort: high|xhigh（文档：仅此模型支持 reasoning，
+    //                   始终推理无关闭选项；用户档位映射为 high 默认深度）
+    //    其余 Ling 模型 → 不支持思考参数，不发任何参数
+    if (isAntLingStyle(provider)) {
+      if (isLing30Flash(mid)) {
+        return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
+      }
+      if (isRing26(mid)) {
+        return { reasoning: { effort: "high" } };
+      }
+      return {};
+    }
+
+    // 4. 智谱：thinking.type
     if (isZhipuStyle(provider)) {
       return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
     }
 
-    // 4. Qwen 系列 / 百炼 / SiliconFlow / ModelScope
+    // 5. Qwen 系列 / 百炼 / SiliconFlow / ModelScope
     if (isQwenStyle(provider, mid)) {
       // 百炼等第三方上跑的 DeepSeek / Kimi 模型官方支持 reasoning_effort 字符串（含 none）
       if (isDeepSeekModel(mid) || isKimi(mid)) {
@@ -135,7 +187,7 @@ var MNIAIService = (function () {
       return { enable_thinking: effort !== "off" };
     }
 
-    // 5. 其他（OpenAI GPT / 自定义 OpenAI 兼容 / 未识别提供商）
+    // 6. 其他（OpenAI GPT / 自定义 OpenAI 兼容 / 未识别提供商）
     return { reasoning_effort: effort === "off" ? "none" : effort };
   }
 

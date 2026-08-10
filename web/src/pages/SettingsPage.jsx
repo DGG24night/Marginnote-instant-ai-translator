@@ -36,6 +36,26 @@ function Section({ title, children }) {
 
 // 帮助提示气泡：圆形感叹号图标，鼠标悬停或点按展开说明文字。
 // 气泡挂在图标容器内，鼠标从图标移到气泡不会消失；触屏（无 hover）环境下点按切换。
+// 信息提示图标（参考用户提供的 icon_info_tip-2 SVG）：
+// 用基础 circle/rect 元素重绘，避免 arc 命令在 UIWebView 老内核上的解析异常。
+// 结构：外圈圆环（stroke 描边）+ 右上角圆点 + 感叹号（圆头矩形）。
+
+// 垃圾桶图标（用户提供的 shanchu SVG：垃圾桶 + 两条删除线，单色 currentColor）
+const TRASH_PATHS = [
+  "M922.7 250.7H736v-37.3C736 130.9 669.1 64 586.7 64H437.3C354.9 64 288 130.9 288 213.3v37.3H101.3C80.7 250.7 64 267.4 64 288c0 20.6 16.7 37.3 37.3 37.3H176v485.3c0 82.5 66.9 149.3 149.3 149.3h373.3c82.5 0 149.3-66.9 149.3-149.3V325.3h74.7c20.6 0 37.3-16.7 37.3-37.3 0.1-20.6-16.6-37.3-37.2-37.3z m-560-37.4c0-41.2 33.4-74.7 74.7-74.7h149.3c41.2 0 74.7 33.4 74.7 74.7v37.3H362.7v-37.3z m410.6 597.4c0 41.2-33.4 74.7-74.7 74.7H325.3c-41.2 0-74.7-33.4-74.7-74.7V325.3h522.7v485.4z",
+  "M624 433.1c-20.6 0-37.3 16.7-37.3 37.3v261.3c0 20.6 16.7 37.3 37.3 37.3 20.6 0 37.3-16.7 37.3-37.3V470.4c0-20.6-16.7-37.3-37.3-37.3zM400 433.1c-20.6 0-37.3 16.7-37.3 37.3v261.3c0 20.6 16.7 37.3 37.3 37.3 20.6 0 37.3-16.7 37.3-37.3V470.4c0-20.6-16.7-37.3-37.3-37.3z",
+];
+
+function TrashIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {TRASH_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
 function Hint({ children }) {
   const [open, setOpen] = useState(false);
   return (
@@ -49,7 +69,11 @@ function Hint({ children }) {
         setOpen((v) => !v);
       }}
     >
-      <span className="mniat-hint-icon" aria-label="帮助说明">!</span>
+      <svg className="mniat-hint-icon" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+        <circle cx="512" cy="512" r="468" fill="none" stroke="currentColor" strokeWidth="88" />
+        <circle cx="521" cy="273" r="77" fill="currentColor" />
+        <rect x="452" y="401" width="138" height="367" rx="69" fill="currentColor" />
+      </svg>
       {open && <span className="mniat-hint-bubble">{children}</span>}
     </span>
   );
@@ -259,8 +283,9 @@ function ProviderCard({ provider }) {
         <button
           className={`btn btn-danger btn-sm ${confirmingDelete ? "btn-danger-solid" : ""}`}
           onClick={handleDelete}
+          title={confirmingDelete ? "再次点击确认删除" : "删除此提供商"}
         >
-          {confirmingDelete ? "确认删除？" : "删除"}
+          {confirmingDelete ? "确认删除？" : <TrashIcon />}
         </button>
       </div>
 
@@ -509,7 +534,10 @@ function RouteEditor({ kind, title }) {
           </select>
         </Field>
 
-        <Field label={`Temperature：${route.temperature}`}>
+        <Field
+          label={`Temperature：${route.temperature}`}
+          hint="控制输出随机性：值越低回答越稳定保守，越高越多样有创意（0–1）。"
+        >
           <input
             type="range"
             min="0"
@@ -524,7 +552,10 @@ function RouteEditor({ kind, title }) {
           />
         </Field>
 
-        <Field label="Reasoning Effort">
+        <Field
+          label="Reasoning Effort"
+          hint="思考强度：高模型会花更多时间推理，回答更深入但更慢；关闭则直接作答（仅支持推理的模型可设）。"
+        >
           <select
             className="input"
             value={route.reasoningEffort}
@@ -589,10 +620,169 @@ function PromptEditor({ promptKey, title }) {
   );
 }
 
+// ---------- 导入确认弹窗 ----------
+
+// ---------- 配置导入 / 导出弹窗 ----------
+// 上下两区：导出（文件 / 剪贴板，不影响当前配置）与导入（文件 / 粘贴，整体覆盖）。
+function ImportDialog({ onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [paste, setPaste] = useState("");
+  const [importMsg, setImportMsg] = useState("");
+  const [importMsgOk, setImportMsgOk] = useState(false);
+  const [exportMsg, setExportMsg] = useState("");
+  const [exportMsgOk, setExportMsgOk] = useState(false);
+
+  const showImportResult = (res) => {
+    if (res && res.ok) {
+      setImportMsgOk(true);
+      setImportMsg(`导入成功：${res.providers} 个提供商${res.hasPrompts ? "，含自定义 Prompt" : ""}。`);
+      setTimeout(onClose, 1200);
+    } else {
+      setImportMsgOk(false);
+      setImportMsg("导入失败：" + ((res && res.error) || "未知错误"));
+    }
+  };
+
+  // 导出为文件：写临时文件 + 弹系统保存面板
+  const onExportFile = async () => {
+    if (busy) return;
+    setBusy(true);
+    setExportMsg("");
+    try {
+      const res = await useConfigStore.getState().exportConfig();
+      if (res && res.ok) {
+        setExportMsgOk(true);
+        setExportMsg(`已弹出保存面板，请选择保存位置（文件 ${res.fileName}）。`);
+      } else {
+        setExportMsgOk(false);
+        setExportMsg("导出失败：" + ((res && res.error) || "未知错误"));
+      }
+    } catch (e) {
+      setExportMsgOk(false);
+      setExportMsg("导出失败：" + String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 复制到剪贴板：配置 JSON 写入系统剪贴板（配合「粘贴导入」跨设备快速同步）
+  const onExportClipboard = async () => {
+    if (busy) return;
+    setBusy(true);
+    setExportMsg("");
+    try {
+      const res = await useConfigStore.getState().exportConfigToClipboard();
+      if (res && res.ok) {
+        setExportMsgOk(true);
+        setExportMsg(`已复制完整配置（${res.bytes} 字符，含供应商与 API Key）到剪贴板，可直接粘贴到文件，或在本弹窗「粘贴导入」中同步。`);
+      } else {
+        setExportMsgOk(false);
+        setExportMsg("导出失败：" + ((res && res.error) || "未知错误"));
+      }
+    } catch (e) {
+      setExportMsgOk(false);
+      setExportMsg("导出失败：" + String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 从文件选择器导入（点「选择文件…」触发；文件选择器取消时不回调，等待超时返回）
+  const doImportFromFile = async () => {
+    if (busy) return;
+    setBusy(true);
+    setImportMsg("");
+    try {
+      showImportResult(await useConfigStore.getState().importConfigFromFile());
+    } catch (e) {
+      setImportMsgOk(false);
+      setImportMsg("导入失败：" + String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 粘贴导入（点「粘贴导入」触发，textarea 有内容才可用）
+  const doImportPaste = async () => {
+    if (busy || !paste.trim()) return;
+    setBusy(true);
+    setImportMsg("");
+    try {
+      showImportResult(await useConfigStore.getState().importConfig(paste));
+    } catch (e) {
+      setImportMsgOk(false);
+      setImportMsg("导入失败：" + String((e && e.message) || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal-title">导入 / 导出配置</h3>
+
+        <div className="modal-section">
+          <div className="modal-section-head">
+            <span className="modal-section-title">导出</span>
+            <span className="field-hint">不影响当前配置</span>
+          </div>
+          <div className="modal-actions modal-actions-left">
+            <button className="btn" onClick={onExportFile} disabled={busy}>
+              导出为文件…
+            </button>
+            <button className="btn" onClick={onExportClipboard} disabled={busy}>
+              复制到剪贴板
+            </button>
+          </div>
+          {exportMsg && (
+            <p className={`sync-msg ${exportMsgOk ? "sync-msg-ok" : "sync-msg-err"}`}>{exportMsg}</p>
+          )}
+        </div>
+
+        <div className="modal-section">
+          <div className="modal-section-head">
+            <span className="modal-section-title">导入</span>
+            <span className="modal-warn-inline">⚠ 会覆盖当前所有配置，不可恢复</span>
+          </div>
+          <div className="modal-actions modal-actions-left">
+            <button className="btn" onClick={doImportFromFile} disabled={busy}>
+              选择文件…
+            </button>
+            <span className="field-hint">选择「导出为文件」生成的 IAT-时间戳.json</span>
+          </div>
+          <textarea
+            className="input textarea modal-textarea"
+            rows={3}
+            spellCheck={false}
+            placeholder="（可选）也可以把配置 JSON 粘贴到这里，再点「粘贴导入」…"
+            value={paste}
+            onChange={(e) => setPaste(e.target.value)}
+          />
+          <div className="modal-actions">
+            <button className="btn" onClick={doImportPaste} disabled={busy || !paste.trim()}>
+              粘贴导入
+            </button>
+          </div>
+          {importMsg && (
+            <p className={`sync-msg ${importMsgOk ? "sync-msg-ok" : "sync-msg-err"}`}>{importMsg}</p>
+          )}
+        </div>
+
+        <div className="modal-actions modal-actions-foot">
+          <button className="btn" onClick={onClose}>取消</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- 设置主页 ----------
 
 function SettingsPage() {
   const { config, loaded, saving, saveError, load, update, addProvider } = useConfigStore();
+  const [importOpen, setImportOpen] = useState(false);
+
   const [presetIndex, setPresetIndex] = useState(0);
   const [activeTab, setActiveTab] = useState("general");
 
@@ -679,7 +869,7 @@ function SettingsPage() {
                   <option value="youdao">有道词典</option>
                   <option value="bing">必应词典</option>
                   <option value="haici">海词词典</option>
-                  <option value="ai">AI 解释（调用 AI）</option>
+                  <option value="ai">AI 解释</option>
                 </select>
               </Field>
 
@@ -746,7 +936,7 @@ function SettingsPage() {
                 </label>
               </Field>
 
-              <Field label="打字机效果" hint="AI 翻译/解释结果以打字机效果逐字显示（兼容所有网络环境）。">
+              <Field label="打字机效果" hint="AI 翻译/解释结果以打字机效果逐字显示。">
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -767,7 +957,33 @@ function SettingsPage() {
                   {config.rememberCardSize ? "开启" : "关闭"}
                 </label>
               </Field>
+
+              <Field
+                label="固定图钉位置"
+                hint="开启后，图钉固定卡片停留在当前位置；关闭则固定后仍跟随划词位置移动。"
+              >
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={config.pinStays !== false}
+                    onChange={(e) => update((c) => { c.pinStays = e.target.checked; })}
+                  />
+                  {config.pinStays !== false ? "开启" : "关闭"}
+                </label>
+              </Field>
             </div>
+
+            <div className="config-sync-buttons">
+              <span className="sync-btn-wrap">
+                <button className="btn" onClick={() => setImportOpen(true)}>
+                  导入 / 导出配置
+                </button>
+                <Hint>
+                  导出：将全部设置（常规设置、AI 服务提供商与 API Key、模型路由、Prompt 模板）保存为文件或复制到剪贴板，便于备份与跨设备同步；导入：从文件或粘贴内容整体覆盖当前配置（导入前可先导出留底）。
+                </Hint>
+              </span>
+            </div>
+            {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
           </Section>
         )}
 

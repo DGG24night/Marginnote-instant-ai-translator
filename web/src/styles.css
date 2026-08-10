@@ -108,6 +108,19 @@ body {
   color: #ffffff;
 }
 
+/* 确认删除态：hover 保持红底白字（不被 .btn:hover 的浅色背景覆盖） */
+.btn-danger-solid:hover {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+/* 删除按钮内的垃圾桶图标 */
+.btn .icon-svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
 .checkbox {
   display: inline-flex;
   align-items: center;
@@ -156,22 +169,14 @@ body {
 }
 
 .mniat-hint-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-block;
   width: 14px;
   height: 14px;
-  border: 1px solid var(--text-secondary);
-  border-radius: 50%;
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
   flex: none;
 }
 
 .mniat-hint:hover .mniat-hint-icon {
-  border-color: var(--accent);
   color: var(--accent);
 }
 
@@ -686,8 +691,12 @@ html.card-fit .card-body {
   margin-right: 6px;
   color: var(--text-secondary);
   opacity: 0.55;
-  font-size: 13px;
-  letter-spacing: 1px;
+  display: inline-flex;
+  align-items: center;
+}
+.card-drag-hint .drag-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .card-toolbar-actions {
@@ -715,6 +724,42 @@ html.card-fit .card-body {
   opacity: 0.45;
   cursor: default;
   background: transparent;
+}
+
+/* 图标按钮内的 SVG 图标（单色，fill=currentColor 跟随按钮颜色，亮/暗主题自适应） */
+.icon-svg {
+  width: 17px;
+  height: 17px;
+  display: inline-block;
+  vertical-align: -2px;
+}
+
+/* 发音按钮：扬声器图标 + 口音文字 */
+.speak-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.speak-btn .icon-svg {
+  width: 15px;
+  height: 15px;
+}
+.speak-label {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* 图钉按钮：固定（active）时高亮为主题色 */
+.pin-btn {
+  display: inline-flex;
+  align-items: center;
+}
+.pin-btn .icon-svg {
+  width: 16px;
+  height: 16px;
+}
+.pin-btn.active {
+  color: var(--accent);
 }
 
 /* 发音提示条（口音自动回退 / 发音不可用） */
@@ -1000,3 +1045,138 @@ html.card-fit .card-body {
   margin: 0 0 10px;
   line-height: 1.5;
 }
+
+/* ---------- 配置备份与同步 ---------- */
+
+.sync-block {
+  margin-bottom: 18px;
+}
+
+.sync-block .btn {
+  min-width: 220px;
+}
+
+.sync-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.sync-msg {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sync-msg-ok {
+  color: var(--ok, #2e9e5b);
+}
+
+.sync-msg-err {
+  color: var(--danger);
+}
+
+/* ---------- 配置导入导出（常规页） ---------- */
+
+.config-sync-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.sync-btn-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 导入确认弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  width: 100%;
+  max-width: 460px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.modal-warn {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.modal-actions-left {
+  justify-content: flex-start;
+}
+
+.modal-actions-foot {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+/* 配置弹窗分区：导出 / 导入两个区域，用上边框分隔 */
+.modal-section + .modal-section {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.modal-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.modal-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 弹窗内的红色警示文字（与 modal-warn 同色，但用于 section head 内联场景） */
+.modal-warn-inline {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* 弹窗内的文本框与上方操作按钮行的间距（避免贴在一起） */
+.modal-textarea {
+  margin-top: 10px;
+}
+

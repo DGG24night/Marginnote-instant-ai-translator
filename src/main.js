@@ -2,6 +2,7 @@ JSB.require("WebDevServerConfig");
 JSB.require("base64");
 JSB.require("network");
 JSB.require("SettingsStore");
+JSB.require("ConfigSync");
 JSB.require("PromptTemplates");
 JSB.require("AIService");
 JSB.require("YoudaoService");
