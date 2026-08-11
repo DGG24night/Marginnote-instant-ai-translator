@@ -354,6 +354,26 @@ body {
   opacity: 0.75;
 }
 
+/* 查词 / 翻译 独立开关（原「插件总开关」一分为二，各管一类功能） */
+.dual-toggle {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dual-toggle .master-toggle {
+  margin-top: 0;
+  flex: 1;
+}
+
+/* 双开关下方说明文字 */
+.dual-toggle-hint {
+  margin: 10px 2px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 .section {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -693,7 +713,21 @@ html.card-fit .card-body {
   opacity: 0.55;
   display: inline-flex;
   align-items: center;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1;
 }
+
+/* bar 图标按钮：hover 反馈（点击由原生拖动条 tap 手势转发，web 层 onClick 兜底） */
+.card-drag-hint:hover {
+  background: var(--bg-hover);
+  opacity: 0.9;
+  color: var(--text);
+}
+
 .card-drag-hint .drag-icon {
   width: 14px;
   height: 14px;
@@ -760,6 +794,338 @@ html.card-fit .card-body {
 }
 .pin-btn.active {
   color: var(--accent);
+}
+
+/* 工具栏搜索框（搜索按钮点击后展开，替代原工具栏按钮区） */
+.card-search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+}
+
+.card-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.card-search-input:focus {
+  border-color: var(--accent);
+}
+
+/* 搜索 / 重新生成 按钮：视觉上比复制、图钉略大，缩小到 15px 保持一致 */
+.search-btn .icon-svg,
+.regen-btn .icon-svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- 下拉菜单（查词服务切换 / 重新生成选模型） ---------- */
+
+/* 通用遮罩：点击菜单外部关闭；透明，不影响顶部原生拖动条 */
+.menu-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+}
+
+/* 查词服务切换菜单（bar 图标，左上角） */
+.switch-menu {
+  position: absolute;
+  top: 46px;
+  left: 4px;
+  z-index: 41;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px var(--shadow);
+  padding: 6px;
+}
+
+.switch-menu-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.switch-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.switch-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.switch-menu-item.is-current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.switch-menu-check {
+  color: var(--accent);
+  margin-left: 12px;
+}
+
+/* 重新生成选模型弹层（右上角）：供应商一级 / 模型二级缩进，可折叠 */
+.model-picker {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  z-index: 41;
+  width: 250px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px var(--shadow);
+  padding: 6px;
+}
+
+.model-picker-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.model-picker-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.model-picker-group {
+  margin-bottom: 2px;
+}
+
+.model-picker-provider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 6px;
+  user-select: none;
+}
+
+.model-picker-provider:hover {
+  background: var(--bg-hover);
+}
+
+.model-picker-caret {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.model-picker-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.model-picker-provider-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.model-picker-no-model {
+  padding: 4px 8px 8px 28px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 二级选项：相对一级供应商缩进 */
+.model-picker-models {
+  padding-left: 18px;
+  padding-bottom: 6px;
+}
+
+.model-picker-item {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-item:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+/* ---------- 历史记录浮层（结果卡片内弹出的独立卡片） ---------- */
+
+.history-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.history-panel {
+  position: absolute;
+  top: 46px;
+  left: 8px;
+  right: 8px;
+  /* 与前端测量公式保持一致：卡片高 H = 46 + 面板自然高 + 8 → max-height = H - 54，
+     恰好完整容纳内容；历史极多超出卡片上限(420)时内部滚动兜底 */
+  max-height: calc(100% - 54px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow);
+  overflow: hidden;
+}
+
+.history-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 6px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.history-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.history-empty {
+  padding: 28px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.history-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.history-item + .history-item {
+  border-top: 1px solid var(--border);
+}
+
+.history-item:hover {
+  background: var(--bg-hover);
+}
+
+/* 查词历史：标签 + 单词 */
+.history-item-word {
+  align-items: center;
+}
+
+.history-tag {
+  flex-shrink: 0;
+  min-width: 26px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  color: #fff;
+}
+
+.history-item-src {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 翻译历史：两行（原文 / 译文），右侧渐变消失提示还有更多内容 */
+.history-item-trans {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.history-item-trans .history-item-src {
+  font-size: 12px;
+  color: var(--text-secondary);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 82%, transparent 100%);
+}
+
+.history-item-trans .history-item-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 82%, transparent 100%);
 }
 
 /* 发音提示条（口音自动回退 / 发音不可用） */
@@ -891,6 +1257,133 @@ html.card-fit .card-body {
 
 .card-result blockquote p {
   margin: 4px 0;
+}
+
+/* ---------- 数学公式（轻量 LaTeX 渲染，零依赖） ---------- */
+.math {
+  font-family: "Times New Roman", "STIX Two Math", "Cambria Math", serif;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* 正体元素：文本/函数名/大型运算符 */
+.math .math-text,
+.math .math-fn,
+.math .math-op {
+  font-style: normal;
+}
+
+/* 上标/下标 */
+.math sup.math-script,
+.math sub.math-script {
+  font-size: 0.72em;
+  line-height: 0;
+}
+
+/* 分数 */
+.math .math-frac {
+  display: inline-flex;
+  flex-direction: column;
+  vertical-align: middle;
+  text-align: center;
+  line-height: 1.15;
+  margin: 0 1px;
+  font-size: 0.95em;
+}
+.math .math-num {
+  border-bottom: 1px solid currentColor;
+  padding: 0 3px;
+  line-height: 1.25;
+}
+.math .math-den {
+  padding: 0 3px;
+  line-height: 1.25;
+}
+
+/* 根号 */
+.math .math-sqrt {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+.math .math-radicand {
+  border-top: 1px solid currentColor;
+  padding: 0 2px;
+}
+.math .math-root {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+.math .math-root-index {
+  font-size: 0.7em;
+  line-height: 0;
+  position: relative;
+  top: -0.55em;
+  margin-right: 2px;
+}
+
+/* 矩阵 / 分段函数 */
+.math .math-matrix {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 2px;
+}
+.math .math-matrix-table {
+  display: inline-table;
+  vertical-align: middle;
+  border-collapse: collapse;
+}
+.math .math-matrix-row {
+  display: table-row;
+}
+.math .math-matrix-cell {
+  display: table-cell;
+  padding: 0 5px;
+  text-align: center;
+  line-height: 1.3;
+}
+.math .math-cases {
+  display: inline-flex;
+  flex-direction: column;
+  vertical-align: middle;
+  font-style: normal;
+}
+.math .math-case-row {
+  display: flex;
+  align-items: baseline;
+}
+.math .math-case-val {
+  text-align: left;
+}
+.math .math-case-cond {
+  padding-left: 6px;
+  color: var(--text-secondary);
+}
+.math .math-cases-brace {
+  align-self: flex-start;
+  font-size: 1.2em;
+  line-height: 1;
+  margin-top: -0.2em;
+}
+
+/* 大型运算符（∑∏∫ 等） */
+.math .math-op {
+  font-size: 1.2em;
+}
+
+/* 块级公式（$$...$$）：居中展示，可横向滚动 */
+.card-result .math-block {
+  display: block;
+  text-align: center;
+  margin: 8px 0;
+  padding: 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .card-result table {

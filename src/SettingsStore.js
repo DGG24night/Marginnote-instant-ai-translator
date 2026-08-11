@@ -14,6 +14,10 @@ var MNIATSettings = (function () {
     return {
       version: CONFIG_VERSION,
       enabled: true,                // 插件总开关（false 时划词不触发）
+      lookupEnabled: true,          // 查词功能独立开关（false 时选中单词不触发查词）
+      translateEnabled: true,       // 翻译功能独立开关（false 时选中句子/段落不触发翻译）
+      lookupCacheSize: 50,          // 查词结果缓存条数（0 = 不使用缓存）
+      translateCacheSize: 50,       // AI 翻译结果缓存条数（0 = 不使用缓存）
       targetLang: "zh-CN",
       triggerMode: "auto",          // auto=选中即翻译 | button=先显示悬浮按钮
       theme: "light",               // light | dark

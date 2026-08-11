@@ -14,7 +14,10 @@ var MNIATFloatingCard = (function () {
   var CARD_MARGIN = 8;
   var EDGE_PADDING = 12;
   var CARD_DRAG_TOP = 44;             // 顶部拖动条高度（覆盖 web toolbar 区域）
-  var CARD_DRAG_BAR_RIGHT = 180;      // 拖动条右侧让出的宽度：需避开工具栏全部按钮（英/美发音、复制、关闭 ≈160px，加 12px 右边距）
+  // 拖动条右侧让出的宽度：需避开工具栏全部按钮。
+  // 工具栏按钮（2026-08-11 扩展）：搜索、英/美发音、AI解释、重新生成、复制、图钉 ≈ 240px，
+  // 加 12px 右边距 → 250。
+  var CARD_DRAG_BAR_RIGHT = 250;
   var CARD_RESIZE_HANDLE_SIZE = 40;   // 右下角缩放手柄触摸区
   var CARD_SIZE_KEY = "mn_iat_card_size"; // NSUserDefaults：记住的卡片尺寸
 
@@ -213,6 +216,11 @@ var MNIATFloatingCard = (function () {
       self._dragBar.backgroundColor = UIColor.clearColor();
       self._dragPan = new UIPanGestureRecognizer(self, "handleCardPan:");
       self._dragBar.addGestureRecognizer(self._dragPan);
+      // 点击 bar 图标（拖动条左端）打开查词服务切换菜单：
+      // 拖动条是覆盖在 web 工具栏左端的原生透明层，web 层收不到该区域的点击，
+      // 故由原生 tap 识别后转发给前端（pan 与 tap 互不冲突：拖动时 tap 自动失败）。
+      self._dragTap = new UITapGestureRecognizer(self, "handleCardDragTap:");
+      self._dragBar.addGestureRecognizer(self._dragTap);
       self._container.addSubview(self._dragBar);
 
       // 右下角缩放手柄
@@ -284,6 +292,16 @@ var MNIATFloatingCard = (function () {
         });
         console.log("[MNIATCard] bridge error: " + error);
         return false;
+      }
+    },
+
+    // 点击工具栏最左侧 bar 图标区域：打开查词服务切换菜单（转发给前端）
+    handleCardDragTap: function (recognizer) {
+      if (recognizer.state === 3) { // Ended
+        var pt = recognizer.locationInView(self._dragBar);
+        if (pt.x >= 0 && pt.x <= 48 && pt.y >= 0 && pt.y <= CARD_DRAG_TOP) {
+          evaluateScript(self._webView, "window.__MNIATCardOpenSwitch && window.__MNIATCardOpenSwitch()");
+        }
       }
     },
 

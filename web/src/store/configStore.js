@@ -89,12 +89,37 @@ export const PROVIDER_PRESETS = [
       { id: "Ring-2.6-1T", supportsReasoning: true },
     ],
   },
+  {
+    name: "Ollama Cloud",
+    baseURL: "https://ollama.com/api",
+    models: [
+      { id: "gpt-oss:120b", supportsReasoning: true },
+      { id: "gpt-oss:20b", supportsReasoning: true },
+      { id: "qwen3-coder:480b", supportsReasoning: true },
+      { id: "deepseek-v3.1:671b", supportsReasoning: true },
+      { id: "glm-4.6", supportsReasoning: false },
+    ],
+  },
+  {
+    name: "Ollama Local",
+    baseURL: "http://localhost:11434",
+    models: [
+      { id: "llama3.2", supportsReasoning: false },
+      { id: "qwen3:8b", supportsReasoning: true },
+      { id: "gemma3:4b", supportsReasoning: false },
+      { id: "deepseek-r1:7b", supportsReasoning: true },
+    ],
+  },
   { name: "自定义（OpenAI 兼容）", baseURL: "", models: [] },
 ];
 
 const EMPTY_CONFIG = {
   version: 1,
   enabled: true,
+  lookupEnabled: true,
+  translateEnabled: true,
+  lookupCacheSize: 50,
+  translateCacheSize: 50,
   targetLang: "zh-CN",
   triggerMode: "auto",
   theme: "light",

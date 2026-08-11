@@ -803,18 +803,32 @@ function SettingsPage() {
         </span>
       </header>
 
-      <button
-        className={`master-toggle ${config.enabled !== false ? "is-on" : "is-off"}`}
-        onClick={() => update((c) => { c.enabled = !(config.enabled !== false); })}
-      >
-        <span className="master-toggle-dot" />
-        <span className="master-toggle-text">
-          {config.enabled !== false ? "插件已启用" : "插件已停用"}
-        </span>
-        <span className="master-toggle-hint">
-          {config.enabled !== false ? "点击停用划词翻译" : "点击启用划词翻译"}
-        </span>
-      </button>
+      {/* 查词 / 翻译 独立开关：原「插件总开关」一分为二，可单独控制两类功能 */}
+      <div className="dual-toggle">
+        <button
+          className={`master-toggle ${config.lookupEnabled !== false ? "is-on" : "is-off"}`}
+          onClick={() => update((c) => { c.lookupEnabled = !(config.lookupEnabled !== false); })}
+        >
+          <span className="master-toggle-dot" />
+          <span className="master-toggle-text">查词</span>
+          <span className="master-toggle-hint">
+            {config.lookupEnabled !== false ? "已启用" : "已停用"}
+          </span>
+        </button>
+        <button
+          className={`master-toggle ${config.translateEnabled !== false ? "is-on" : "is-off"}`}
+          onClick={() => update((c) => { c.translateEnabled = !(config.translateEnabled !== false); })}
+        >
+          <span className="master-toggle-dot" />
+          <span className="master-toggle-text">翻译</span>
+          <span className="master-toggle-hint">
+            {config.translateEnabled !== false ? "已启用" : "已停用"}
+          </span>
+        </button>
+      </div>
+      <p className="dual-toggle-hint">
+        查词：选中单词时查词典；翻译：选中句子/段落时 AI 翻译。仅开启查词时，选中句子不会触发翻译。
+      </p>
 
       <nav className="settings-tabs">
         {SETTINGS_TABS.map((tab) => (
@@ -970,6 +984,44 @@ function SettingsPage() {
                   />
                   {config.pinStays !== false ? "开启" : "关闭"}
                 </label>
+              </Field>
+
+              <Field
+                label="查词缓存数量"
+                hint="查过的单词结果会缓存（含 AI 解释），再次查询相同单词时直接使用缓存，无需重复请求；不同查词服务查询同一单词互不串用缓存。设为 0 表示不使用缓存。"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={config.lookupCacheSize}
+                  onChange={(e) =>
+                    update((c) => {
+                      const v = parseInt(e.target.value, 10);
+                      c.lookupCacheSize = isNaN(v) || v < 0 ? 0 : v;
+                    })
+                  }
+                />
+              </Field>
+
+              <Field
+                label="AI 翻译缓存数量"
+                hint="翻译过的句子结果会缓存，再次翻译相同句子时直接使用缓存，无需重复请求。设为 0 表示不使用缓存；点击「重新生成」始终重新请求，不读缓存。"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={config.translateCacheSize}
+                  onChange={(e) =>
+                    update((c) => {
+                      const v = parseInt(e.target.value, 10);
+                      c.translateCacheSize = isNaN(v) || v < 0 ? 0 : v;
+                    })
+                  }
+                />
               </Field>
             </div>
 

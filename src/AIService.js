@@ -11,8 +11,32 @@
 
 var MNIAIService = (function () {
 
+  // Ollama（Cloud / Local）识别：
+  //   Cloud baseURL: https://ollama.com/api（用户预置）
+  //   Local baseURL: http://localhost:11434 / http://127.0.0.1:11434（用户预置，无 /api 后缀）
+  // 预置的 baseURL 是 Ollama 原生 API 基址，而 OpenAI 兼容端点是 /v1/chat/completions，
+  // 需要 endpointOf / fetchModels 中转换为 /v1 层级（见 endpointOf 注释）。
+  function isOllamaStyle(provider) {
+    var url = String(provider && provider.baseURL || "").toLowerCase();
+    return /ollama\.com/.test(url) ||
+      /localhost:11434/.test(url) ||
+      /127\.0\.0\.1:11434/.test(url);
+  }
+
   function endpointOf(provider) {
     var base = String(provider.baseURL || "").trim().replace(/\/+$/, "");
+    if (isOllamaStyle(provider)) {
+      // Ollama 官方 OpenAI 兼容端点为 /v1/chat/completions：
+      //   Local: http://localhost:11434/v1/chat/completions
+      //   Cloud: https://ollama.com/v1/chat/completions
+      // 预置 baseURL（https://ollama.com/api、http://localhost:11434）为原生 API 基址：
+      //   - https://ollama.com/api  → 去掉 /api → https://ollama.com + /v1
+      //   - http://localhost:11434  → 直接 + /v1
+      // 用户若已填到 /v1 层级（如 http://localhost:11434/v1）则直接复用。
+      if (/\/api$/.test(base)) base = base.replace(/\/api$/, "");
+      if (!/\/v1$/.test(base)) base = base + "/v1";
+      return base + "/chat/completions";
+    }
     return base + "/chat/completions";
   }
 
@@ -125,20 +149,28 @@ var MNIAIService = (function () {
 
     var mid = String(modelId || "").trim();
 
-    // 0. doubao 模型（火山方舟官方 + 其他供应商托管的 doubao）：
+    // 0. Ollama（Cloud / Local，OpenAI 兼容接口）：
+    //    按供应商 URL 识别，优先于模型名启发式（如 Ollama 上的 qwen3 模型不应走
+    //    DashScope 的 enable_thinking，而应使用官方兼容接口支持的 reasoning_effort：
+    //    "high"|"medium"|"low"|"max"|"none"；关闭 → "none"，其余档位透传）。
+    if (isOllamaStyle(provider)) {
+      return { reasoning_effort: effort === "off" ? "none" : effort };
+    }
+
+    // 1. doubao 模型（火山方舟官方 + 其他供应商托管的 doubao）：
     //    统一用 thinking.type 控制深度思考开关（火山方舟文档：enabled/disabled/auto，
     //    用户设置无 auto，故映射 enabled/disabled 两档）
     if (isDoubaoModel(mid)) {
       return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
     }
 
-    // 1. DeepSeek 官方：双参数（开关 + 强度）
+    // 2. DeepSeek 官方：双参数（开关 + 强度）
     if (isDeepSeekStyle(provider)) {
       if (effort === "off") return { thinking: { type: "disabled" } };
       return { thinking: { type: "enabled" }, reasoning_effort: effort };
     }
 
-    // 2. Moonshot Kimi：按 modelId 分支
+    // 3. Moonshot Kimi：按 modelId 分支
     if (isMoonshotStyle(provider)) {
       if (isKimiK27Code(mid)) {
         // kimi-k2.7-code 系列：始终开启；用户关闭无效（官方只支持 enabled）
@@ -158,7 +190,7 @@ var MNIAIService = (function () {
       }
     }
 
-    // 3. 蚂蚁百灵（api.ant-ling.com）：
+    // 4. 蚂蚁百灵（api.ant-ling.com）：
     //    Ling-3.0-flash → thinking.type（文档：仅此模型支持 thinking）
     //    Ring-2.6-1T   → reasoning.effort: high|xhigh（文档：仅此模型支持 reasoning，
     //                   始终推理无关闭选项；用户档位映射为 high 默认深度）
@@ -173,12 +205,12 @@ var MNIAIService = (function () {
       return {};
     }
 
-    // 4. 智谱：thinking.type
+    // 5. 智谱：thinking.type
     if (isZhipuStyle(provider)) {
       return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
     }
 
-    // 5. Qwen 系列 / 百炼 / SiliconFlow / ModelScope
+    // 6. Qwen 系列 / 百炼 / SiliconFlow / ModelScope
     if (isQwenStyle(provider, mid)) {
       // 百炼等第三方上跑的 DeepSeek / Kimi 模型官方支持 reasoning_effort 字符串（含 none）
       if (isDeepSeekModel(mid) || isKimi(mid)) {
@@ -187,7 +219,7 @@ var MNIAIService = (function () {
       return { enable_thinking: effort !== "off" };
     }
 
-    // 6. 其他（OpenAI GPT / 自定义 OpenAI 兼容 / 未识别提供商）
+    // 7. 其他（OpenAI GPT / 自定义 OpenAI 兼容 / 未识别提供商）
     return { reasoning_effort: effort === "off" ? "none" : effort };
   }
 
@@ -238,6 +270,22 @@ var MNIAIService = (function () {
     return message;
   }
 
+  // 网络/认证错误友好提示：
+  // NSURLErrorDomain -1012（NSURLErrorUserCancelledAuthentication）= 服务器发起认证质询但被取消，
+  // 常见于 API Key 缺失/错误（如 Ollama Cloud 需先在 ollama.com 创建 API Key；本地 Ollama 无需 Key）。
+  function errorText(err) {
+    var code = err && typeof err.code === "number" ? err.code : null;
+    var raw = (err && (err.message || err.localizedDescription))
+      ? String(err.message || err.localizedDescription)
+      : String(err);
+    if (code === -1012) {
+      return "认证失败（-1012）：服务器要求认证，请检查 API Key 是否正确。" +
+        "Ollama Cloud 需先在 https://ollama.com/settings/keys 创建 API Key 并填入提供商设置；" +
+        "Ollama Local 本地服务无需 Key。";
+    }
+    return raw;
+  }
+
   // ---------- 流式输出（打字机模拟） ----------
 
   var SIM_INTERVAL_MS = 30;  // 打字机 tick 间隔
@@ -266,7 +314,7 @@ var MNIAIService = (function () {
         if (handlers.onError) handlers.onError(extractError(res.status, res));
       }
     }).catch(function (err) {
-      if (handlers.onError) handlers.onError("请求失败: " + String(err));
+      if (handlers.onError) handlers.onError("请求失败: " + errorText(err));
     });
   }
 
@@ -333,7 +381,7 @@ var MNIAIService = (function () {
       }
     }).catch(function (err) {
       if (state.cancelled) return;
-      if (handlers.onError) handlers.onError("请求失败: " + String(err));
+      if (handlers.onError) handlers.onError("请求失败: " + errorText(err));
     });
 
     return { cancel: cancel };
@@ -342,12 +390,14 @@ var MNIAIService = (function () {
   return {
     // kind: "translate" | "lookup"（决定使用哪组路由配置）
     // promptKind: "translate" | "explain"（决定使用哪个 prompt 模板）
-    // handlers: { onDelta(delta, accumulated), onDone(full), onError(message) }
+    // handlers: { onDelta(delta, accumulated), onDone(full), onError(message), resolved?, override? }
+    //   resolved: { provider, route } —— 调用方已解析好的有效路由（含「重新生成选模型」的临时覆盖），
+    //             不传则内部按配置解析。
     // 返回 { cancel() }
     run: function (kind, promptKind, text, handlers) {
       handlers = handlers || {};
 
-      var resolved = MNIATSettings.resolveRoute(kind);
+      var resolved = handlers.resolved || MNIATSettings.resolveRoute(kind);
       var provider = resolved.provider;
       var route = resolved.route;
 
@@ -405,6 +455,9 @@ var MNIAIService = (function () {
           });
         }
         return { ok: false, status: res.status, message: extractError(res.status, res) };
+      }).catch(function (err) {
+        // 网络层错误（含 -1012 认证被取消）→ 转为可读结果，避免设置页显示裸错误
+        return { ok: false, status: 0, message: errorText(err) };
       });
     },
 
@@ -436,7 +489,13 @@ var MNIAIService = (function () {
     // 返回 { models: [id 字符串数组] }。推理能力不在列表阶段判断（启发式不可靠），
     // 统一由「测试」时的思考参数探测（probeReasoning）确认。
     fetchModels: function (baseURL, apiKey) {
-      var url = String(baseURL || "").trim().replace(/\/+$/, "") + "/models";
+      var base = String(baseURL || "").trim().replace(/\/+$/, "");
+      if (isOllamaStyle({ baseURL: base })) {
+        // Ollama OpenAI 兼容模型列表端点为 /v1/models（与 endpointOf 同一套转换规则）
+        if (/\/api$/.test(base)) base = base.replace(/\/api$/, "");
+        if (!/\/v1$/.test(base)) base = base + "/v1";
+      }
+      var url = base + "/models";
       return MNNetwork.fetch(url, {
         method: "GET",
         headers: { "Authorization": "Bearer " + String(apiKey || "") },

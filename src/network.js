@@ -76,7 +76,13 @@ var MNNetwork = {
         NSOperationQueue.mainQueue(),
         function (res, data, err) {
           if (!MNNetwork.isNil(err)) {
-            reject(String(err.localizedDescription));
+            // 保留错误码/域：上层（AIService 等）可按 code 输出友好提示，
+            // 例如 NSURLErrorDomain -1012（认证质询被取消）→ 提示检查 API Key。
+            reject({
+              message: String((err.localizedDescription) || err),
+              code: typeof err.code === "number" ? err.code : -1,
+              domain: String(err.domain || "")
+            });
           } else {
             resolve(new MNIATResponse(data, res));
           }

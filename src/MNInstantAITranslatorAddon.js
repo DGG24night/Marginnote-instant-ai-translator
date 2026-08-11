@@ -40,9 +40,11 @@ function createMNInstantAITranslatorAddon(mainPath) {
       MNIATSelectionMonitor.start(win, {
         onSelection: function (text, anchorRect) {
           var config = MNIATSettings.load();
-          if (!config.enabled) return; // 总开关关闭时不响应划词
+          // 独立开关：查词/翻译分别控制；两者都关闭时不响应划词（旧版总开关 enabled 已并入这两个开关）
+          if (config.lookupEnabled === false && config.translateEnabled === false) return;
           if (config.triggerMode === "button") {
-            // 悬浮按钮模式：先显示小按钮，点击后才触发
+            // 悬浮按钮模式：先按独立开关判断该选区是否应处理，再显示小按钮，点击后才触发
+            if (!MNIATFlow.canHandle(text)) return;
             MNIATFloatingCard.showTrigger(win, anchorRect, text);
           } else {
             MNIATFlow.handleSelection(win, text, anchorRect);

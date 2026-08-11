@@ -114,6 +114,31 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATFlow.explainWithAI();
   }
 
+  // 工具栏搜索框查询任意单词：用默认查词服务提供商（config.lookupProvider）查词
+  function cardLookup(context, payload) {
+    if (!payload || !payload.text) {
+      throw new Error("缺少查询文本");
+    }
+    return MNIATFlow.searchWord(String(payload.text));
+  }
+
+  // 工具栏 bar 图标菜单：临时切换查词服务/AI 解释（不写回默认查词服务配置）
+  function cardLookupProvider(context, payload) {
+    if (!payload || !payload.provider) {
+      throw new Error("缺少查词服务参数");
+    }
+    return MNIATFlow.lookupWithProvider(String(payload.provider));
+  }
+
+  // 「重新生成」：点击重跑当前 AI 翻译/解释（跳过缓存）；
+  // 长按选模型时 payload = { providerId, modelId }（临时覆盖，不写回路由配置）
+  function regenerate(context, payload) {
+    var override = payload && payload.providerId
+      ? { providerId: String(payload.providerId), modelId: String(payload.modelId || "") }
+      : null;
+    return MNIATFlow.regenerate(override);
+  }
+
   // 解析单词发音 URL（AI 解释结果工具栏的手动发音按钮）：
   // 按「AI 解释发音」配置选择有道/海词/必应，accent 传 uk | us；
   // 返回 { url, fallbacks }，fallbacks 为回退链（小写词/另一口音，播放失败时前端依次尝试）
@@ -128,6 +153,20 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
         fallbacks: (r && Array.isArray(r.fallbacks) ? r.fallbacks : []).filter(function (u) { return !!u; })
       };
     });
+  }
+
+  // 历史记录：kind = "lookup"（查词，含词典/AI 解释）| "translate"（翻译）
+  function getHistory(context, payload) {
+    var kind = payload && payload.kind === "translate" ? "translate" : "lookup";
+    return { items: MNIATFlow.getHistory(kind) };
+  }
+
+  // 点击历史条目：结果卡片显示缓存内容（不再请求网络）
+  function applyHistory(context, payload) {
+    if (!payload || !payload.kind || !payload.item) {
+      throw new Error("缺少历史条目参数");
+    }
+    return MNIATFlow.applyHistory(payload.kind, payload.item);
   }
 
   // 卡片前端测量内容高度后上报，插件侧钳制并调整 WebView 高度
@@ -165,7 +204,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     cardLostFocus,
     copyText,
     explainWithAI,
+    cardLookup,
+    cardLookupProvider,
+    regenerate,
     getPronounceURL,
+    getHistory,
+    applyHistory,
     resizeCard,
     closePanel,
   };
