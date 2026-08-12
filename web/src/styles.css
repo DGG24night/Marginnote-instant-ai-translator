@@ -444,6 +444,116 @@ body {
   transform: rotate(90deg);
 }
 
+/* 设置页「提供商」折叠区块（AI 服务提供商 / 机器翻译服务） */
+.provider-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.section-collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.section-collapse-head .provider-caret {
+  font-size: 10px;
+  transition: transform 0.15s;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.section-collapse-head .provider-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.section-collapse-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.section-collapse-head .field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.section-collapse-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+/* 机器翻译账户卡片 */
+.machine-provider-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.machine-provider-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+/* 「偏好」分块标题与三列/换行的勾选栅格 */
+.subsection-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 20px 0 12px;
+  color: var(--text);
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px;
+  margin-bottom: 16px;
+}
+
+.checkbox-grid .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.machine-provider-head .provider-name {
+  font-weight: 600;
+  margin-right: 10px;
+  flex: 1;
+}
+
+/* 机器翻译提供商标签（百度/小牛） */
+.machine-vendor-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 8px;
+  color: #fff;
+  background: rgb(112, 181, 120);
+  margin-right: 8px;
+}
+
+.route-editor.mt-route-editor {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
 .provider-meta {
   margin-left: auto;
   margin-right: 10px;
@@ -766,6 +876,45 @@ html.card-fit .card-body {
   height: 17px;
   display: inline-block;
   vertical-align: -2px;
+}
+
+/* 敏感字段输入框：密文输入 + 右侧眼睛切换按钮（默认隐藏显示为····，点击眼睛显示明文） */
+.secret-input-wrap {
+  position: relative;
+  display: block;
+}
+.secret-input-wrap .input {
+  padding-right: 38px; /* 给眼睛按钮留出空间 */
+  width: 100%;
+}
+.secret-eye-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
+  margin: 0;
+}
+.secret-eye-btn .icon-svg {
+  width: 15px;
+  height: 15px;
+}
+.secret-eye-btn:hover {
+  color: var(--accent);
+  background: rgba(128, 128, 128, 0.12);
+}
+.secret-eye-btn.is-visible {
+  color: var(--accent);
 }
 
 /* 发音按钮：扬声器图标 + 口音文字 */

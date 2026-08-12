@@ -113,6 +113,17 @@ export const PROVIDER_PRESETS = [
   { name: "自定义（OpenAI 兼容）", baseURL: "", models: [] },
 ];
 
+// 机器翻译服务预设：vendor 用于插件侧分派（baidu → MNIATBaiduMT，niutrans → MNIATNiuTrans，
+// aliyun → MNIATAliyunMT，tencent → MNIATTencentMT，volcengine → MNIATVolcengineMT）
+// name 在设置页下拉里显示，保持简短
+export const MACHINE_PROVIDER_PRESETS = [
+  { vendor: "baidu",      name: "百度翻译" },
+  { vendor: "niutrans",   name: "小牛翻译" },
+  { vendor: "aliyun",     name: "阿里翻译" },
+  { vendor: "tencent",    name: "腾讯翻译" },
+  { vendor: "volcengine", name: "火山翻译" },
+];
+
 const EMPTY_CONFIG = {
   version: 1,
   enabled: true,
@@ -130,6 +141,9 @@ const EMPTY_CONFIG = {
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
+  translateService: "ai", // ai=AI 翻译 | machine=机器翻译（百度等开放平台）
+  machineProviders: [], // [{id,name,appid,secretKey}] 机器翻译服务账户列表
+  machineRouting: { providerId: "", apiType: "llm", domain: "it" }, // llm|standard|domain + 领域值
   providers: [],
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },

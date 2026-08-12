@@ -28,6 +28,14 @@ var MNIATSettings = (function () {
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
+      translateService: "ai",       // 翻译引擎：ai=AI 翻译 | machine=机器翻译（百度/小牛/阿里云/腾讯等）
+      machineProviders: [],         // [{id,vendor,name,appid,secretKey,accessKeyId,accessKeySecret,secretId,secretKey}] 机器翻译账户列表
+      machineRouting: {             // 机器翻译路由配置
+        providerId: "",             // 机器翻译提供商 id（machineProviders 中的 id）
+        apiType: "llm",             // 百度：llm=大模型 | standard=通用 | domain=领域；小牛：flash=Flash | pro=Pro；阿里云：general=通用版 | pro=专业版；腾讯：text=文本翻译
+        domain: "it",               // 百度领域文本翻译的领域值（apiType=domain 时生效）
+        scene: "title"              // 阿里云专业版场景（title/description/communication/medical/social/finance，apiType=pro 且 vendor=aliyun 时生效）
+      },
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
@@ -81,6 +89,46 @@ var MNIATSettings = (function () {
     merged.prompts = {
       translate: (raw.prompts && typeof raw.prompts.translate === "string") ? raw.prompts.translate : "",
       explain: (raw.prompts && typeof raw.prompts.explain === "string") ? raw.prompts.explain : ""
+    };
+
+    // 机器翻译配置深兜底（老配置无这些字段时给默认值）
+    merged.translateService = raw.translateService === "machine" ? "machine" : "ai";
+    if (!Array.isArray(merged.machineProviders)) merged.machineProviders = [];
+    // 早期账户无 vendor 字段：按名称推断（"小牛翻译" → niutrans，"阿里云" → aliyun，其余 → baidu）
+    for (var mi = 0; mi < merged.machineProviders.length; mi++) {
+      var mp = merged.machineProviders[mi];
+      if (mp && typeof mp === "object") {
+        if (!mp.vendor) {
+          var mpName = String(mp.name || "");
+          if (/小牛/.test(mpName)) mp.vendor = "niutrans";
+          else if (/阿里/.test(mpName)) mp.vendor = "aliyun";
+          else if (/腾讯/.test(mpName)) mp.vendor = "tencent";
+          else if (/火山/.test(mpName)) mp.vendor = "volcengine";
+          else mp.vendor = "baidu";
+        }
+        mp.appid = typeof mp.appid === "string" ? mp.appid : "";
+        mp.secretKey = typeof mp.secretKey === "string" ? mp.secretKey : "";
+        // 阿里云账户字段（AccessKey）
+        mp.accessKeyId = typeof mp.accessKeyId === "string" ? mp.accessKeyId : "";
+        mp.accessKeySecret = typeof mp.accessKeySecret === "string" ? mp.accessKeySecret : "";
+        // 腾讯云账户字段（SecretId/SecretKey）
+        mp.secretId = typeof mp.secretId === "string" ? mp.secretId : "";
+        // 火山引擎账户字段（AccessKeyId + SecretAccessKey）
+        mp.secretAccessKey = typeof mp.secretAccessKey === "string" ? mp.secretAccessKey : "";
+      }
+    }
+    // 各机器翻译商的接口类型白名单（超集：百度 llm/standard/domain，小牛 flash/pro，阿里云 general/pro，腾讯/火山 text）
+    var MT_API_TYPES = { llm: 1, standard: 1, domain: 1, flash: 1, pro: 1, general: 1, text: 1 };
+    merged.machineRouting = {
+      providerId: (raw.machineRouting && typeof raw.machineRouting.providerId === "string")
+        ? raw.machineRouting.providerId : "",
+      apiType: (raw.machineRouting && raw.machineRouting.apiType &&
+        MT_API_TYPES[raw.machineRouting.apiType])
+        ? raw.machineRouting.apiType : "llm",
+      domain: (raw.machineRouting && typeof raw.machineRouting.domain === "string")
+        ? raw.machineRouting.domain : "it",
+      scene: (raw.machineRouting && typeof raw.machineRouting.scene === "string")
+        ? raw.machineRouting.scene : "title"
     };
 
     if (!Array.isArray(merged.providers)) merged.providers = [];

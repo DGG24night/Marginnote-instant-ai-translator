@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import MNBridge from "../lib/mnBridge";
-import { PROVIDER_PRESETS, useConfigStore } from "../store/configStore";
+import { PROVIDER_PRESETS, MACHINE_PROVIDER_PRESETS, useConfigStore } from "../store/configStore";
 
 const TARGET_LANGS = [
   { value: "zh-CN", label: "简体中文" },
@@ -17,10 +17,35 @@ const REASONING_OPTIONS = [
   { value: "high", label: "高" },
 ];
 
+// 百度领域文本翻译支持领域（fanyi-api.baidu.com/doc/24）：value 为接口 domain 参数
+const MT_DOMAINS = [
+  { value: "it", label: "信息技术" },
+  { value: "finance", label: "金融财经" },
+  { value: "machinery", label: "机械制造" },
+  { value: "senimed", label: "生物医药" },
+  { value: "novel", label: "网络文学" },
+  { value: "academic", label: "学术论文" },
+  { value: "aerospace", label: "航空航天" },
+  { value: "wiki", label: "人文社科" },
+  { value: "news", label: "新闻资讯" },
+  { value: "law", label: "法律法规" },
+  { value: "contract", label: "合同" },
+];
+
+// 阿里云机器翻译专业版场景（Translate 接口 Scene 参数）
+const MT_SCENES = [
+  { value: "title", label: "商品标题" },
+  { value: "description", label: "商品描述" },
+  { value: "communication", label: "商品沟通" },
+  { value: "medical", label: "医疗" },
+  { value: "social", label: "社交" },
+  { value: "finance", label: "金融" },
+];
+
 // 设置页顶部导航标签（short 用于窄屏时的缩写）
 const SETTINGS_TABS = [
   { id: "general", label: "常规", short: "常规" },
-  { id: "providers", label: "AI 服务提供商", short: "提供商" },
+  { id: "providers", label: "服务提供商", short: "提供商" },
   { id: "routing", label: "模型路由", short: "路由" },
   { id: "prompts", label: "Prompt 模板", short: "Prompt" },
 ];
@@ -53,6 +78,51 @@ function TrashIcon() {
         <path key={i} d={d} fill="currentColor" />
       ))}
     </svg>
+  );
+}
+
+// 眼睛图标（用户提供的 yanjing SVG：眼球轮廓 + 瞳孔，单色 currentColor）
+const EYE_PATHS = [
+  "M512 780.538776c-173.97551 0-321.828571-131.134694-394.44898-208.979592-30.82449-33.436735-30.82449-85.159184 0-118.595919 72.620408-77.844898 220.473469-208.979592 394.44898-208.979592s321.828571 131.134694 394.44898 208.979592c30.82449 33.436735 30.82449 85.159184 0 118.595919-72.620408 77.844898-220.473469 208.979592-394.44898 208.979592z m0-495.281633c-158.302041 0-295.706122 122.77551-364.146939 195.918367-16.195918 17.240816-16.195918 44.408163 0 61.64898 67.918367 73.142857 205.844898 195.918367 364.146939 195.918367s295.706122-122.77551 364.146939-195.918367c16.195918-17.240816 16.195918-44.408163 0-61.64898-68.440816-73.142857-205.844898-195.918367-364.146939-195.918367z",
+  "M512 643.134694c-72.097959 0-131.134694-58.514286-131.134694-131.134694S439.902041 380.865306 512 380.865306s131.134694 58.514286 131.134694 131.134694-59.036735 131.134694-131.134694 131.134694z m0-220.47347c-49.110204 0-89.338776 40.228571-89.338776 89.338776s40.228571 89.338776 89.338776 89.338776 89.338776-40.228571 89.338776-89.338776-40.228571-89.338776-89.338776-89.338776z",
+];
+
+function EyeIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {EYE_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
+// 敏感字段输入框：默认密文显示（····），点击右侧眼睛按钮切换明文/密文
+function SecretInput({ className, placeholder, value, onChange }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="secret-input-wrap">
+      <input
+        className={className || "input"}
+        type={show ? "text" : "password"}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+      />
+      <button
+        type="button"
+        className={`secret-eye-btn${show ? " is-visible" : ""}`}
+        onClick={() => setShow((v) => !v)}
+        title={show ? "隐藏内容" : "显示内容"}
+        aria-label={show ? "隐藏内容" : "显示内容"}
+      >
+        <EyeIcon />
+      </button>
+    </div>
   );
 }
 
@@ -313,9 +383,7 @@ function ProviderCard({ provider }) {
           </Field>
 
           <Field label="API Key（仅保存在本地）">
-            <input
-              className="input"
-              type="password"
+            <SecretInput
               placeholder="sk-..."
               value={provider.apiKey}
               onChange={(e) => patch((p) => { p.apiKey = e.target.value; })}
@@ -491,6 +559,161 @@ function ProviderCard({ provider }) {
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// 机器翻译服务商卡片：复用 ProviderCard 的「点击 → 显示确认 → 再点确认」两步删除模式
+function MachineProviderCard({ mp, idx }) {
+  const { update } = useConfigStore();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const confirmTimerRef = useRef(null);
+
+  // UIWebView 不支持 window.confirm，改为两段式确认：
+  // 第一次点击变为「确认删除？」（3 秒内有效），再次点击才真正删除
+  const handleDelete = () => {
+    if (confirmingDelete) {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      update((c) => {
+        c.machineProviders.splice(idx, 1);
+        if (c.machineRouting.providerId === mp.id) {
+          c.machineRouting.providerId = "";
+        }
+      });
+      setConfirmingDelete(false);
+      return;
+    }
+    setConfirmingDelete(true);
+    confirmTimerRef.current = setTimeout(() => setConfirmingDelete(false), 3000);
+  };
+
+  const patch = (mutator) =>
+    update((c) => {
+      const target = c.machineProviders[idx];
+      if (target) mutator(target);
+    });
+
+  const vendorLabel = mp.vendor === "niutrans" ? "小牛" :
+    (mp.vendor === "aliyun" ? "阿里云" :
+    (mp.vendor === "tencent" ? "腾讯云" :
+    (mp.vendor === "volcengine" ? "火山" : "百度")));
+
+  return (
+    <div className="machine-provider-card">
+      <div className="machine-provider-head">
+        <input
+          className="input provider-name"
+          value={mp.name}
+          onChange={(e) => patch((p) => { p.name = e.target.value; })}
+        />
+        <span className="machine-vendor-tag">{vendorLabel}</span>
+        <button
+          className={`btn btn-danger btn-sm ${confirmingDelete ? "btn-danger-solid" : ""}`}
+          onClick={handleDelete}
+          title={confirmingDelete ? "再次点击确认删除" : "删除此服务"}
+          aria-label="删除此服务"
+        >
+          {confirmingDelete ? "确认删除？" : <TrashIcon />}
+        </button>
+      </div>
+
+      {mp.vendor === "aliyun" ? (
+        <>
+          <Field
+            label="AccessKey ID"
+            hint="阿里云 RAM 访问密钥 ID（控制台 → 访问控制 RAM → 用户 → 创建 AccessKey）"
+          >
+            <SecretInput
+              placeholder="LTAI..."
+              value={mp.accessKeyId || ""}
+              onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
+            />
+          </Field>
+          <Field
+            label="AccessKey Secret"
+            hint="阿里云 RAM 访问密钥 Secret（仅创建时可见，请妥善保存）"
+          >
+            <SecretInput
+              placeholder="阿里云 AccessKey Secret"
+              value={mp.accessKeySecret || ""}
+              onChange={(e) => patch((p) => { p.accessKeySecret = e.target.value; })}
+            />
+          </Field>
+        </>
+      ) : mp.vendor === "tencent" ? (
+        <>
+          <Field
+            label="SecretId"
+            hint="腾讯云 API 密钥 ID（控制台 → 访问管理 → API 密钥管理）"
+          >
+            <SecretInput
+              placeholder="AKID..."
+              value={mp.secretId || ""}
+              onChange={(e) => patch((p) => { p.secretId = e.target.value; })}
+            />
+          </Field>
+          <Field
+            label="SecretKey"
+            hint="腾讯云 API 密钥 SecretKey（仅创建时可见，请妥善保存）"
+          >
+            <SecretInput
+              placeholder="腾讯云 SecretKey"
+              value={mp.secretKey || ""}
+              onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
+            />
+          </Field>
+        </>
+      ) : mp.vendor === "volcengine" ? (
+        <>
+          <Field
+            label="AccessKey ID"
+            hint="火山引擎访问密钥 ID（控制台 → 访问控制 → 密钥管理）"
+          >
+            <SecretInput
+              placeholder="AK..."
+              value={mp.accessKeyId || ""}
+              onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
+            />
+          </Field>
+          <Field
+            label="SecretAccessKey"
+            hint="火山引擎访问密钥（仅创建时可见，请妥善保存）"
+          >
+            <SecretInput
+              placeholder="火山引擎 SecretAccessKey"
+              value={mp.secretAccessKey || ""}
+              onChange={(e) => patch((p) => { p.secretAccessKey = e.target.value; })}
+            />
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field
+            label="APPID"
+            hint={mp.vendor === "niutrans"
+              ? "小牛 Flash 需要；仅使用 Pro（大模型）可留空"
+              : "百度开放平台 APPID（必填）"}
+          >
+            <SecretInput
+              placeholder={mp.vendor === "niutrans" ? "小牛 Flash 专用（Pro 可留空）" : "百度开放平台 APPID"}
+              value={mp.appid}
+              onChange={(e) => patch((p) => { p.appid = e.target.value; })}
+            />
+          </Field>
+          <Field
+            label="密钥（Secret Key / API Key）"
+            hint={mp.vendor === "niutrans"
+              ? "小牛开放平台 API Key（控制台→API应用，Flash 与 Pro 通用）"
+              : "百度开放平台密钥（必填）"}
+          >
+            <SecretInput
+              placeholder={mp.vendor === "niutrans" ? "小牛 API Key" : "百度开放平台密钥"}
+              value={mp.secretKey}
+              onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
+            />
+          </Field>
+        </>
       )}
     </div>
   );
@@ -792,7 +1015,15 @@ function SettingsPage() {
   const [importOpen, setImportOpen] = useState(false);
 
   const [presetIndex, setPresetIndex] = useState(0);
+  const [mtPresetIndex, setMtPresetIndex] = useState(0);
   const [activeTab, setActiveTab] = useState("general");
+  const [aiProvidersOpen, setAiProvidersOpen] = useState(false); // AI 服务提供商默认折叠
+  const [mtOpen, setMtOpen] = useState(true);                     // 机器翻译服务默认展开
+
+  // 当前机器翻译路由所选提供商的 vendor（用于路由页动态显示接口选项）
+  const mtProviders = config.machineProviders || [];
+  const mtSelected = mtProviders.find((p) => p.id === config.machineRouting.providerId);
+  const mtVendor = (mtSelected && mtSelected.vendor) || "baidu";
 
   useEffect(() => {
     load();
@@ -856,6 +1087,20 @@ function SettingsPage() {
         {activeTab === "general" && (
           <Section title="常规">
             <div className="route-grid">
+              <Field
+                label="翻译服务"
+                hint="翻译句子/段落时使用的引擎：AI 翻译走「模型路由」中配置的大模型；机器翻译走百度等开放平台（无需 AI Key），接口类型与领域在「模型路由」页配置。"
+              >
+                <select
+                  className="input"
+                  value={config.translateService === "machine" ? "machine" : "ai"}
+                  onChange={(e) => update((c) => { c.translateService = e.target.value; })}
+                >
+                  <option value="ai">AI 翻译</option>
+                  <option value="machine">机器翻译</option>
+                </select>
+              </Field>
+
               <Field label="触发方式">
                 <select
                   className="input"
@@ -949,39 +1194,6 @@ function SettingsPage() {
                 </select>
               </Field>
 
-              <Field label="查词自动发音">
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={config.pronounceAuto}
-                    onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
-                  />
-                  开启
-                </label>
-              </Field>
-
-              <Field label="打字机效果" hint="AI 翻译/解释结果以打字机效果逐字显示。">
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={config.streamMode !== false}
-                    onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
-                  />
-                  {config.streamMode !== false ? "开启" : "关闭"}
-                </label>
-              </Field>
-
-              <Field label="记住卡片大小">
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={!!config.rememberCardSize}
-                    onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
-                  />
-                  {config.rememberCardSize ? "开启" : "关闭"}
-                </label>
-              </Field>
-
               <Field
                 label="查词缓存数量"
                 hint="查过的单词结果会缓存（含 AI 解释），再次查询相同单词时直接使用缓存，无需重复请求；不同查词服务查询同一单词互不串用缓存。设为 0 表示不使用缓存。"
@@ -1021,6 +1233,34 @@ function SettingsPage() {
               </Field>
             </div>
 
+            <h3 className="subsection-title">偏好</h3>
+            <div className="checkbox-grid">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.pronounceAuto}
+                  onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
+                />
+                查词自动发音
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.streamMode !== false}
+                  onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
+                />
+                打字机效果
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={!!config.rememberCardSize}
+                  onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
+                />
+                记住卡片大小
+              </label>
+            </div>
+
             <div className="config-sync-buttons">
               <span className="sync-btn-wrap">
                 <button className="btn" onClick={() => setImportOpen(true)}>
@@ -1036,30 +1276,92 @@ function SettingsPage() {
         )}
 
         {activeTab === "providers" && (
-          <Section title="AI 服务提供商">
-            <div className="add-provider">
-              <select
-                className="input"
-                value={presetIndex}
-                onChange={(e) => setPresetIndex(Number(e.target.value))}
-              >
-                {PROVIDER_PRESETS.map((preset, i) => (
-                  <option key={i} value={i}>{preset.name}</option>
-                ))}
-              </select>
-              <button
-                className="btn"
-                onClick={() => addProvider(PROVIDER_PRESETS[presetIndex])}
-              >
-                + 添加提供商
-              </button>
+          <Section title="服务提供商">
+            {/* AI 服务提供商：默认折叠，点击展开 */}
+            <div className="provider-section">
+              <div className="section-collapse-head" onClick={() => setAiProvidersOpen((v) => !v)}>
+                <span className={`provider-caret ${aiProvidersOpen ? "is-open" : ""}`}>▶</span>
+                <span className="section-collapse-title">AI 服务提供商</span>
+              </div>
+              {aiProvidersOpen && (
+                <div className="section-collapse-body">
+                  <div className="add-provider">
+                    <select
+                      className="input"
+                      value={presetIndex}
+                      onChange={(e) => setPresetIndex(Number(e.target.value))}
+                    >
+                      {PROVIDER_PRESETS.map((preset, i) => (
+                        <option key={i} value={i}>{preset.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn"
+                      onClick={() => addProvider(PROVIDER_PRESETS[presetIndex])}
+                    >
+                      + 添加提供商
+                    </button>
+                  </div>
+                  {config.providers.length === 0 && (
+                    <p className="field-hint">尚未添加提供商。从上方预设中选择添加，然后填入 API Key。</p>
+                  )}
+                  {config.providers.map((provider) => (
+                    <ProviderCard key={provider.id} provider={provider} />
+                  ))}
+                </div>
+              )}
             </div>
-            {config.providers.length === 0 && (
-              <p className="field-hint">尚未添加提供商。从上方预设中选择添加，然后填入 API Key。</p>
-            )}
-            {config.providers.map((provider) => (
-              <ProviderCard key={provider.id} provider={provider} />
-            ))}
+
+            {/* 机器翻译服务：百度开放平台等，无需 AI Key */}
+            <div className="provider-section">
+              <div className="section-collapse-head" onClick={() => setMtOpen((v) => !v)}>
+                <span className={`provider-caret ${mtOpen ? "is-open" : ""}`}>▶</span>
+                <span className="section-collapse-title">机器翻译服务</span>
+              </div>
+              {mtOpen && (
+                <div className="section-collapse-body">
+                  {config.machineProviders.length === 0 && (
+                    <p className="field-hint">尚未配置机器翻译账户。在上方下拉中选择要添加的服务商，再点击「+ 添加」。</p>
+                  )}
+                  {config.machineProviders.map((mp, idx) => (
+                    <MachineProviderCard key={mp.id} mp={mp} idx={idx} />
+                  ))}
+                  <div className="add-provider">
+                    <select
+                      className="input"
+                      value={mtPresetIndex}
+                      onChange={(e) => setMtPresetIndex(Number(e.target.value))}
+                    >
+                      {MACHINE_PROVIDER_PRESETS.map((preset, i) => (
+                        <option key={i} value={i}>{preset.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        const preset = MACHINE_PROVIDER_PRESETS[mtPresetIndex];
+                        update((c) => {
+                          const id = `mt-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+                          c.machineProviders.push({
+                            id,
+                            vendor: preset.vendor,
+                            name: preset.name,
+                            appid: "",
+                            secretKey: "",
+                            accessKeyId: "",
+                            accessKeySecret: "",
+                            secretId: "",
+                            secretAccessKey: "",
+                          });
+                        });
+                      }}
+                    >
+                      + 添加
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </Section>
         )}
 
@@ -1067,6 +1369,159 @@ function SettingsPage() {
           <Section title="模型路由">
             <RouteEditor kind="translate" title="翻译（句子/段落）" />
             <RouteEditor kind="lookup" title="AI 解释（单词卡切换）" />
+
+            <div className="route-editor mt-route-editor">
+              <h3 className="route-title">机器翻译路由</h3>
+              <div className="route-grid">
+                <Field label="机器翻译提供商">
+                  <select
+                    className="input"
+                    value={config.machineRouting.providerId}
+                    onChange={(e) => {
+                      const pid = e.target.value;
+                      const mp = (config.machineProviders || []).find((p) => p.id === pid);
+                      update((c) => {
+                        c.machineRouting.providerId = pid;
+                        // 切换提供商时按 vendor 重置接口类型默认值
+                        if (!mp) {
+                          c.machineRouting.apiType = "llm";
+                        } else if (mp.vendor === "niutrans") {
+                          c.machineRouting.apiType = "pro";
+                        } else if (mp.vendor === "aliyun") {
+                          c.machineRouting.apiType = "general";
+                        } else if (mp.vendor === "tencent" || mp.vendor === "volcengine") {
+                          // 腾讯/火山：当前均只暴露一个文本翻译接口
+                          c.machineRouting.apiType = "text";
+                        } else {
+                          c.machineRouting.apiType = "llm";
+                        }
+                      });
+                    }}
+                  >
+                    <option value="">未选择</option>
+                    {(config.machineProviders || []).map((mp) => (
+                      <option key={mp.id} value={mp.id}>{mp.name}</option>
+                    ))}
+                  </select>
+                </Field>
+
+                {mtVendor === "niutrans" ? (
+                  <Field
+                    label="产品类型"
+                    hint="Flash：高并发低延迟，适合批量短文本；Pro（大模型）：上下文理解更强，适合长文本与专业内容。"
+                  >
+                    <select
+                      className="input"
+                      value={config.machineRouting.apiType === "flash" ? "flash" : "pro"}
+                      onChange={(e) =>
+                        update((c) => { c.machineRouting.apiType = e.target.value; })
+                      }
+                    >
+                      <option value="flash">通用文本 Flash</option>
+                      <option value="pro">通用文本 Pro（大模型）</option>
+                    </select>
+                  </Field>
+                ) : mtVendor === "aliyun" ? (
+                  <Field
+                    label="接口类型"
+                    hint="通用版：通用场景翻译；专业版：按场景（商品/医疗/社交/金融等）优化译文。均支持自动识别原文语言。"
+                  >
+                    <select
+                      className="input"
+                      value={config.machineRouting.apiType === "pro" ? "pro" : "general"}
+                      onChange={(e) =>
+                        update((c) => { c.machineRouting.apiType = e.target.value; })
+                      }
+                    >
+                      <option value="general">通用版（TranslateGeneral）</option>
+                      <option value="pro">专业版（Translate）</option>
+                    </select>
+                  </Field>
+                ) : mtVendor === "tencent" ? (
+                  <Field
+                    label="接口类型"
+                    hint="腾讯云机器翻译 TMT 文本翻译接口（TextTranslate），支持自动识别原文语言，单次 2000 字符以内。"
+                  >
+                    <select
+                      className="input"
+                      value="text"
+                      disabled
+                    >
+                      <option value="text">文本翻译（TextTranslate）</option>
+                    </select>
+                  </Field>
+                ) : mtVendor === "volcengine" ? (
+                  <Field
+                    label="接口类型"
+                    hint="火山引擎文本翻译（TranslateText），单次最多 16 段或 5000 字符；SourceLanguage 未指定时自动检测。"
+                  >
+                    <select
+                      className="input"
+                      value="text"
+                      disabled
+                    >
+                      <option value="text">文本翻译（TranslateText）</option>
+                    </select>
+                  </Field>
+                ) : (
+                  <Field
+                    label="接口类型"
+                    hint="大模型翻译走百度大模型接口；通用文本翻译走标准接口；领域文本翻译按领域优化（仅中英互译）。"
+                  >
+                    <select
+                      className="input"
+                      value={config.machineRouting.apiType === "domain" ? "domain" :
+                        (config.machineRouting.apiType === "llm" ? "llm" : "standard")}
+                      onChange={(e) =>
+                        update((c) => { c.machineRouting.apiType = e.target.value; })
+                      }
+                    >
+                      <option value="llm">大模型翻译</option>
+                      <option value="standard">通用文本翻译</option>
+                      <option value="domain">领域文本翻译</option>
+                    </select>
+                  </Field>
+                )}
+
+                {mtVendor === "baidu" && config.machineRouting.apiType === "domain" && (
+                  <Field
+                    label="翻译领域"
+                    hint="领域翻译接口 domain 参数：按领域优化译文（信息技术/金融财经/生物医药等 11 个领域）。"
+                  >
+                    <select
+                      className="input"
+                      value={config.machineRouting.domain || "it"}
+                      onChange={(e) =>
+                        update((c) => { c.machineRouting.domain = e.target.value; })
+                      }
+                    >
+                      {MT_DOMAINS.map((d) => (
+                        <option key={d.value} value={d.value}>{d.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                {mtVendor === "aliyun" && config.machineRouting.apiType === "pro" && (
+                  <Field
+                    label="专业版场景"
+                    hint="阿里云专业版 Translate 接口 Scene 参数：每个场景用对应引擎优化（商品标题/商品描述/商品沟通/医疗/社交/金融）。"
+                  >
+                    <select
+                      className="input"
+                      value={config.machineRouting.scene || "title"}
+                      onChange={(e) =>
+                        update((c) => { c.machineRouting.scene = e.target.value; })
+                      }
+                    >
+                      {MT_SCENES.map((s) => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+              </div>
+            </div>
           </Section>
         )}
 

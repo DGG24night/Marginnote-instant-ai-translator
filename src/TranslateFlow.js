@@ -157,6 +157,126 @@ var MNIATFlow = (function () {
     pushEvent({ type: "dictResult", data: result });
   }
 
+  // 机器翻译（百度/小牛/阿里云/腾讯等开放平台，无 AI 提供商依赖）：
+  //   config.translateService === "machine" 时，句子/段落翻译走此路径；
+  //   provider/apiType/domain 来自 config.machineRouting + machineProviders；
+  //   按 provider.vendor 分派到对应服务（baidu → MNIATBaiduMT，niutrans → MNIATNiuTrans，
+  //   aliyun → MNIATAliyunMT，tencent → MNIATTencentMT）；
+  //   缓存：翻译缓存，键 = mt:<providerId>:<vendor>:<apiType>[:<domain|scene>]:text；
+  //   重新生成（bypassCache=true）跳过读取，新结果仍写入缓存覆盖旧值。
+  function runMachineTranslate(job, opts) {
+    opts = opts || {};
+    var cfg = MNIATSettings.load();
+    var routing = cfg.machineRouting || {};
+    var provider = null;
+    var providers = cfg.machineProviders || [];
+    for (var i = 0; i < providers.length; i++) {
+      if (providers[i].id === routing.providerId) {
+        provider = providers[i];
+        break;
+      }
+    }
+    // 校验密钥：阿里云用 AccessKeySecret，腾讯云用 secretId/secretKey，火山用 accessKeyId/secretAccessKey，其他用 secretKey/apiKey
+    var vendor = provider.vendor === "niutrans" ? "niutrans" :
+      (provider.vendor === "aliyun" ? "aliyun" :
+      (provider.vendor === "tencent" ? "tencent" :
+      (provider.vendor === "volcengine" ? "volcengine" : "baidu")));
+    if (vendor === "aliyun") {
+      if (!provider.accessKeyId || !provider.accessKeySecret) {
+        pushEvent({ type: "error", message: "未配置机器翻译服务：请先在设置「机器翻译服务」中填写阿里云 AccessKey ID 与 Secret" });
+        return;
+      }
+    } else if (vendor === "tencent") {
+      if (!provider.secretId || !provider.secretKey) {
+        pushEvent({ type: "error", message: "未配置机器翻译服务：请先在设置「机器翻译服务」中填写腾讯云 SecretId 与 SecretKey" });
+        return;
+      }
+    } else if (vendor === "volcengine") {
+      if (!provider.accessKeyId || !provider.secretAccessKey) {
+        pushEvent({ type: "error", message: "未配置机器翻译服务：请先在设置「机器翻译服务」中填写火山引擎 AccessKey ID 与 SecretAccessKey" });
+        return;
+      }
+    } else if (!provider.secretKey && !provider.apiKey) {
+      pushEvent({ type: "error", message: "未配置机器翻译服务：请先在设置「机器翻译服务」中填写密钥" });
+      return;
+    }
+
+    var apiType = routing.apiType;
+    var domain = String(routing.domain || "it");
+    var scene = String(routing.scene || "title");
+    var text = String(job.text).trim();
+    // 缓存键：vendor + apiType；baidu 的领域、aliyun 专业版的场景会改变结果，纳入键
+    var cacheKey = "mt:" + provider.id + ":" + vendor + ":" + apiType +
+      (vendor === "baidu" && apiType === "domain" ? ":" + domain : "") +
+      (vendor === "aliyun" && apiType === "pro" ? ":" + scene : "") + ":" + text;
+
+    if (!opts.bypassCache) {
+      var cached = MNIATCache.get("translate", cacheKey);
+      if (cached && cached.text && cached.text.trim().length > 0) {
+        console.log("[MNIATFlow] machine translate cache hit: " + text.slice(0, 40));
+        pushEvent({ type: "translateResult", text: cached.text });
+        return;
+      }
+    }
+
+    var promise = null;
+    if (vendor === "niutrans") {
+      promise = MNIATNiuTrans.translate(text, {
+        apiType: apiType === "pro" ? "pro" : "flash",
+        appid: provider.appid,
+        secretKey: provider.secretKey || provider.apiKey,
+        targetLang: cfg.targetLang
+      });
+    } else if (vendor === "aliyun") {
+      promise = MNIATAliyunMT.translate(text, {
+        apiType: apiType === "pro" ? "pro" : "general",
+        scene: scene,
+        accessKeyId: provider.accessKeyId,
+        accessKeySecret: provider.accessKeySecret,
+        targetLang: cfg.targetLang
+      });
+    } else if (vendor === "tencent") {
+      promise = MNIATTencentMT.translate(text, {
+        secretId: provider.secretId,
+        secretKey: provider.secretKey,
+        targetLang: cfg.targetLang
+      });
+    } else if (vendor === "volcengine") {
+      promise = MNIATVolcengineMT.translate(text, {
+        accessKeyId: provider.accessKeyId,
+        secretAccessKey: provider.secretAccessKey,
+        targetLang: cfg.targetLang
+      });
+    } else {
+      promise = MNIATBaiduMT.translate(text, {
+        apiType: apiType,
+        domain: domain,
+        appid: provider.appid,
+        secretKey: provider.secretKey || provider.apiKey,
+        targetLang: cfg.targetLang
+      });
+    }
+
+    promise.then(function (result) {
+      if (currentJob !== job) return; // 已被新任务取代
+      var out = (result && result.text) ? String(result.text) : "";
+      if (out.trim().length > 0) {
+        if (!opts.bypassCache) {
+          MNIATCache.put("translate", cacheKey, {
+            text: out,
+            meta: { kind: "translate", provider: provider.id, sourceText: text }
+          });
+        }
+        pushEvent({ type: "translateResult", text: out });
+      } else {
+        pushEvent({ type: "error", message: "机器翻译返回为空，请稍后重试" });
+      }
+    }).catch(function (err) {
+      if (currentJob !== job) return;
+      pushEvent({ type: "error", message: String((err && err.message) || err) });
+    });
+  }
+
   // 词典查词（含缓存）：
   // 缓存键 = 服务商:单词小写 —— 不同查词服务查同一单词不互用缓存；
   // 命中时用当前配置重建发音信息（口音/自动开关可能已变化）。
@@ -414,7 +534,13 @@ var MNIATFlow = (function () {
         runLookup(job, lookupProvider);
       } else {
         pushEvent({ type: "loading", mode: "translate", text: job.text });
-        runAI(job, "translate", "translate", {});
+        // 翻译引擎：常规设置「翻译服务」= machine 时走机器翻译（百度等），否则走 AI
+        var cfg = MNIATSettings.load();
+        if (cfg.translateService === "machine") {
+          runMachineTranslate(job, {});
+        } else {
+          runAI(job, "translate", "translate", {});
+        }
       }
     },
 
@@ -490,6 +616,12 @@ var MNIATFlow = (function () {
       var promptKind = currentJob.mode === "explain" ? "explain" : "translate";
       pushEvent({ type: "reset" });
       pushEvent({ type: "loading", mode: currentJob.mode, text: currentJob.text });
+      // 机器翻译模式下：重新生成 = 重跑机器翻译（跳过缓存）
+      if (currentJob.mode === "translate" &&
+        MNIATSettings.load().translateService === "machine") {
+        runMachineTranslate(currentJob, { bypassCache: true });
+        return { regenerated: true };
+      }
       runAI(currentJob, kind, promptKind, { bypassCache: true, override: override });
       return { regenerated: true };
     },
