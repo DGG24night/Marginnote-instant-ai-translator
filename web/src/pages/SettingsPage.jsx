@@ -110,6 +110,13 @@ function ProviderCard({ provider }) {
   const [modelQuery, setModelQuery] = useState("");
   const confirmTimerRef = useRef(null);
 
+  // 延时格式化：<1000ms 显示 ms，≥1s 显示 s 并保留 1 位小数；无数据返回 "—"
+  const formatLatency = (ms) => {
+    if (ms == null || Number.isNaN(Number(ms))) return "—";
+    const n = Number(ms);
+    return n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(1)} s`;
+  };
+
   // UIWebView 不支持 window.confirm，改为两段式确认：
   // 第一次点击变为「确认删除？」（3 秒内有效），再次点击才真正删除
   const handleDelete = () => {
@@ -175,6 +182,7 @@ function ProviderCard({ provider }) {
             ok: result.ok,
             message: result.message || "连接失败",
             supportsReasoning: result.supportsReasoning,
+            latencyMs: result.latencyMs,
           },
         }));
         if (typeof result.supportsReasoning === "boolean") {
@@ -384,8 +392,8 @@ function ProviderCard({ provider }) {
               <div className="model-test-result">
                 <span className={testResult.ok ? "test-ok" : "test-fail"}>
                   {testResult.ok
-                    ? `✓ ${testResult.modelId} 连接成功`
-                    : `✗ ${testResult.modelId}：${testResult.message || "连接失败"}`}
+                    ? `✓ ${testResult.modelId} 连接成功（延时 ${formatLatency(testResult.latencyMs)}）`
+                    : `✗ ${testResult.modelId}：${testResult.message || "连接失败"}${testResult.latencyMs != null ? `（延时 ${formatLatency(testResult.latencyMs)}）` : ""}`}
                   {testResult.ok && testResult.supportsReasoning === true && "（支持推理，已更新）"}
                   {testResult.ok && testResult.supportsReasoning === false && "（不支持推理，已更新）"}
                   {testResult.ok && testResult.supportsReasoning === null && "（无法探测推理能力）"}
@@ -422,7 +430,7 @@ function ProviderCard({ provider }) {
                         </span>
                         <span className="bulk-result-id" title={m.id}>{m.id}</span>
                         <span className="bulk-result-msg">
-                          {r.ok ? "连接成功" : r.message || "连接失败"}
+                          {r.ok ? `连接成功（延时 ${formatLatency(r.latencyMs)}）` : r.message || "连接失败"}
                           {r.ok && r.supportsReasoning === true && "（支持推理）"}
                           {r.ok && r.supportsReasoning === false && "（不支持推理）"}
                           {r.ok && r.supportsReasoning === null && "（无法探测推理）"}
@@ -883,6 +891,7 @@ function SettingsPage() {
                   <option value="youdao">有道词典</option>
                   <option value="bing">必应词典</option>
                   <option value="haici">海词词典</option>
+                  <option value="kingsoft">金山词霸</option>
                   <option value="ai">AI 解释</option>
                 </select>
               </Field>
@@ -902,6 +911,7 @@ function SettingsPage() {
                   <option value="youdao">有道词典</option>
                   <option value="haici">海词词典</option>
                   <option value="bing">必应词典</option>
+                  <option value="kingsoft">金山词霸</option>
                 </select>
               </Field>
 
@@ -969,20 +979,6 @@ function SettingsPage() {
                     onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
                   />
                   {config.rememberCardSize ? "开启" : "关闭"}
-                </label>
-              </Field>
-
-              <Field
-                label="固定图钉位置"
-                hint="开启后，图钉固定卡片停留在当前位置；关闭则固定后仍跟随划词位置移动。"
-              >
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={config.pinStays !== false}
-                    onChange={(e) => update((c) => { c.pinStays = e.target.checked; })}
-                  />
-                  {config.pinStays !== false ? "开启" : "关闭"}
                 </label>
               </Field>
 

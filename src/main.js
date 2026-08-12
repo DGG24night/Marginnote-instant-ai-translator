@@ -9,6 +9,7 @@ JSB.require("AIService");
 JSB.require("YoudaoService");
 JSB.require("BingDictionaryService");
 JSB.require("HaiCiDictionaryService");
+JSB.require("KingsoftDictionaryService");
 JSB.require("FloatingCardController");
 JSB.require("TranslateFlow");
 JSB.require("SelectionMonitor");

@@ -55,11 +55,14 @@ var MNIATConfigSync = (function () {
   }
 
   // 读文本文件；空文件或失败返回 null
+  // 注意：JSCore 无「NSData→字符串」API（mn-docs「网络请求」文档确认），
+  // 必须走 data.base64Encoding() + Base64/UTF8 解码（与 network.js 的 text() 一致），
+  // 不能用 NSString.stringWithContentsOfData（该桥接在插件环境不可靠）。
   function readTextFile(path) {
     try {
       var data = NSData.dataWithContentsOfFile(path);
       if (!data || data.length() === 0) return null;
-      return NSString.stringWithContentsOfData(data);
+      return MNIATUTF8.decode(MNIATBase64.decode(data.base64Encoding()));
     } catch (e) {
       console.log("[MNIATConfigSync] read failed: " + e);
       return null;

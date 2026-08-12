@@ -2,6 +2,12 @@
 // 来源：mn-docs「网络请求」教程封装（Response#text 依赖 MNIATBase64/MNIATUTF8）
 // 说明：流式（NSURLConnection delegate 分块）在本环境实测不可用（回调不触发且卡死），
 //       已整体移除，仅保留一次性请求通道。
+//
+// 默认 UA 选用桌面 Mac Safari 的原因（2026-08-12）：
+//   部分网站（如金山词霸 www.iciba.com）对手机 UA 直接 302 → 移动端空壳页，导致
+//   解析失败。其它查词服务（必应、海词、有道）对桌面 UA 也完全兼容；
+//   桌面 UA 在 MarginNote 插件环境下表现稳定，因此统一使用。
+//   调用方仍可用 options.headers.User-Agent 单独覆盖。
 
 function MNIATResponse(data, nsResponse) {
   this.data = data;
@@ -41,7 +47,8 @@ var MNNetwork = {
     request.setTimeoutInterval(options.timeout || 30);
 
     var headers = {
-      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
       "Content-Type": "application/json",
       "Accept": "application/json"
     };

@@ -633,8 +633,18 @@ function CardPage() {
       if (d.ukphone || d.usphone) {
         lines.push(`英 /${d.ukphone}/  美 /${d.usphone}/`);
       }
+      // 同一词性的释义合并成一行（用「；」分隔），不同词性分多行 —— 与有道展示一致
+      const groups = [];
       d.translations.forEach((t) => {
-        lines.push(`${t.pos ? t.pos + " " : ""}${t.meaning}`);
+        const pos = t.pos || "";
+        if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
+          groups[groups.length - 1].meanings.push(t.meaning);
+        } else {
+          groups.push({ pos, meanings: [t.meaning] });
+        }
+      });
+      groups.forEach((g) => {
+        lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);
       });
       text = lines.join("\n");
     } else {
@@ -696,6 +706,7 @@ function CardPage() {
     youdao: { label: "YD", bg: "rgb(250, 100, 100)" },
     bing: { label: "BY", bg: "rgb(85, 166, 242)" },
     haici: { label: "HC", bg: "rgb(85, 211, 242)" },
+    kingsoft: { label: "JS", bg: "rgb(112, 181, 120)" },
     ai: { label: "AI", bg: "rgb(229, 173, 255)" },
   };
 
@@ -733,6 +744,7 @@ function CardPage() {
     { value: "youdao", label: "有道词典" },
     { value: "bing", label: "必应词典" },
     { value: "haici", label: "海词词典" },
+    { value: "kingsoft", label: "金山词霸" },
     { value: "ai", label: "AI 解释" },
   ];
 
@@ -898,12 +910,24 @@ function CardPage() {
               </div>
             )}
             <ul className="dict-trans">
-              {state.dict.translations.map((t, i) => (
-                <li key={i}>
-                  {t.pos && <span className="dict-pos">{t.pos}</span>}
-                  {t.meaning}
-                </li>
-              ))}
+              {/* 同一词性的多个释义合并成一行，用「；」分隔（与有道展示一致）；不同词性仍分多行 */}
+              {(() => {
+                const groups = [];
+                state.dict.translations.forEach((t) => {
+                  const pos = t.pos || "";
+                  if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
+                    groups[groups.length - 1].meanings.push(t.meaning);
+                  } else {
+                    groups.push({ pos, meanings: [t.meaning] });
+                  }
+                });
+                return groups.map((g, i) => (
+                  <li key={i}>
+                    {g.pos && <span className="dict-pos">{g.pos}</span>}
+                    {g.meanings.join("；")}
+                  </li>
+                ));
+              })()}
             </ul>
           </div>
         )}

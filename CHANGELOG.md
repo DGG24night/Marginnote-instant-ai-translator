@@ -1,5 +1,44 @@
 # 更新日志
 
+## v0.7.2（2026-08-12）
+
+### 修复
+
+- **有道查词偶发返回"随机词条" / 词头错位**（用户实测 commercial 触发）：
+  - 根因：`jsonapi_s` 接口在风控状态下对常见词返回随机推荐词（不再可用）；页面内 `<span class="title">` 在多处出现（页头 banner "全部产品"、"双语例句"/"网络释义"/"英英释义"等模块标题、词头 span），原正则取了 banner 作为词头。
+  - 修复：放弃 `jsonapi_s`，改走**移动版页面** `dict.youdao.com/m/result?word=<w>&lang=en`（Nuxt SSR，HTML 渲染）；词头限定 `<h4 class="word-title">` 区块、音标限定 `<div class="phone_con">` 到下个 `simple dict-module` 之间的范围（避免嵌套 div 截断）、释义限定 `simple dict-module` 区块；拼写错的词（无 simple 区块）正确判定未命中。
+- **金山词霸所有词都"未找到"**：
+  - 根因一：插件默认请求 UA 是 iPhone；金山词霸 `www.iciba.com` 对手机 UA 返回 **302 → `m.iciba.com`** 空壳页，无 `__NEXT_DATA__` 数据。
+  - 根因二（真凶）：解析 `__NEXT_DATA__` 时用了 `NSString.stringWithString(...).dataUsingEncoding(4)` 转 NSData 再 `NSJSONSerialization` 解析——该桥接路径在 JSCore 中不可靠，解析永远返回 null（按 mn-docs「JavaScript 原生环境」文档，标准内置 `JSON` 对象可用，应直接用 `JSON.parse`）。
+  - 修复：`network.js` 默认 UA 由 iPhone 改为**桌面 Mac Safari**；`KingsoftDictionaryService` 改用 **`JSON.parse`** 解析 `__NEXT_DATA__`。另按 mn-docs「网络请求」文档规范修复 `ConfigSync.readTextFile`（NSData→文本走 `base64Encoding()`+Base64 解码，不再用 `NSString.stringWithContentsOfData`）。其它查词服务（必应、海词、有道）对桌面 UA 完全兼容。
+- **金山词霸对大小写敏感导致释义错位**（用户实测 Hard → 哈德姓氏词条）：
+  - 根因：金山词霸对大小写敏感（"Hard" = 哈德姓氏 vs "hard" = 普通的形容词），划词选中 "Hard" 时直接发请求被解析为姓氏。
+  - 修复：`runLookup` 在 `provider === "kingsoft"` 路径下把查询词统一小写后再发请求；其他服务商大小写不敏感保持原样。缓存 key 始终用小写（之前已是），同一词的不同大小写形式命中同一缓存，避免互相污染。
+- **搜索功能复用查词缓存导致返回上次结果**（用户实测：划词查 Hard 拿到姓氏结果 → 搜索 hard 仍返回姓氏词条）：
+  - 根因：搜索走 `runLookup` 会读缓存；之前划词 "Hard" 写入的缓存（key 为 `kingsoft:hard`）被搜索 "hard" 命中。
+  - 修复：搜索路径（`searchWord`）在 job 上设置 `bypassCache=true`，`runLookup` 据此跳过读和写缓存、强制走网络。划词（自动触发）仍读/写缓存，不变。
+
+### 新功能
+
+- **新增查词服务：金山词霸**（`https://www.iciba.com/word?w=<word>`，无需 key）：
+  - 解析页面内嵌 `__NEXT_DATA__` JSON（Next.js SSR 数据），结构化稳定：英美音标、真人发音 mp3（缺失回退 TTS）、带词性释义（主源 basic 释义，兜底柯林斯/简明英汉/机器翻译）。
+  - 已接入：设置页「查词服务提供商」与「AI 解释发音」下拉、结果卡片工具栏「查词服务切换」菜单、历史记录（新增 JS 标签，绿底）。
+  - 缓存键独立（`kingsoft:` 前缀），与有道/必应/海词互不串用。
+
+### 体验优化
+
+- **同词性释义合并展示**（用户反馈：必应 / 海词 / 金山每个意思一行太长；与有道同款格式）：
+  - 释义渲染改为按 `pos` 分组：同一词性的多个 meaning 用「；」连接成一行，不同词性仍分多行展示。复制文本格式同步对齐。
+  - 对有道无影响（其原始数据本身就是按 pos 分好组），其它三家的多行单义折叠为少行多义。历史记录点击后走同一渲染逻辑自动生效。
+- **移除「固定图钉位置」设置项**（用户要求：图钉固定即停留在当前位置，无需配置）：
+  - 删除设置页「常规设置」中的「固定图钉位置」开关；图钉固定后卡片**默认不跟随划词位置**（原 `pinStays` 开关的开启态即默认行为）。
+  - 清理：`SettingsStore.js` / `web/src/store/configStore.js` 删除 `pinStays` 默认值，`FloatingCardController.showJob` 不再读配置、图钉固定直接跳过重新定位（旧设置里残留的 `pinStays` 值不再生效）。
+- **AI 翻译预置 prompt 更新**（用户指定文案）：
+  - 默认翻译模板改为「你是一名专业的学术翻译。请将以下内容翻译为{target_lang}，要求准确、通顺、符合学术表达习惯。**只输出译文**，不要输出任何解释或额外内容。原文：{text}」。
+- **AI 服务商测试显示延时**（用户要求）：
+  - 插件侧 `AIService.test` 记录耗时并返回 `latencyMs`（整个测试过程毫秒数，含推理探测请求；失败/超时也返回实际耗时）。
+  - 设置页单个模型「测试」结果与「批量测试全部」的每个模型行均显示延时（<1s 显示 ms，≥1s 显示 s 保留 1 位小数）。
+
 ## v0.7.1（2026-08-12）
 
 ### 修复

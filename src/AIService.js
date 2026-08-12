@@ -421,8 +421,10 @@ var MNIAIService = (function () {
     // 连通性测试：最小请求验证 baseURL/apiKey/model 可用。
     // probeReasoning=true 时，连通后再发一次带思考参数的请求探测模型是否支持思考，
     // 返回 supportsReasoning: true | false | null（null = 无法判断，如 429/5xx/超时）。
+    // 返回 latencyMs：整个测试过程耗时（毫秒，含探测请求；失败/超时也返回实际耗时）。
     test: function (provider, modelId, probeReasoning) {
       var self = this;
+      var t0 = Date.now();
       var basic = {
         model: modelId,
         messages: [{ role: "user", content: "ping" }],
@@ -435,9 +437,10 @@ var MNIAIService = (function () {
         json: basic,
         timeout: 15
       }).then(function (res) {
+        var connectMs = Date.now() - t0;
         if (res.status >= 200 && res.status < 300) {
           if (!probeReasoning) {
-            return { ok: true, status: res.status, supportsReasoning: null };
+            return { ok: true, status: res.status, supportsReasoning: null, latencyMs: connectMs };
           }
           // 思考能力探测：多一次带思考参数的请求
           return MNNetwork.fetch(endpointOf(provider), {
@@ -446,18 +449,19 @@ var MNIAIService = (function () {
             json: self.buildProbeBody(provider, modelId),
             timeout: 15
           }).then(function (res2) {
+            var totalMs = Date.now() - t0;
             if (res2.status >= 200 && res2.status < 300) {
-              return { ok: true, status: res.status, supportsReasoning: true };
+              return { ok: true, status: res.status, supportsReasoning: true, latencyMs: totalMs };
             }
             var msg = extractError(res2.status, res2);
             var detected = self.detectReasoningFromError(msg);
-            return { ok: true, status: res.status, supportsReasoning: detected, probeMessage: msg };
+            return { ok: true, status: res.status, supportsReasoning: detected, probeMessage: msg, latencyMs: totalMs };
           });
         }
-        return { ok: false, status: res.status, message: extractError(res.status, res) };
+        return { ok: false, status: res.status, message: extractError(res.status, res), latencyMs: connectMs };
       }).catch(function (err) {
         // 网络层错误（含 -1012 认证被取消）→ 转为可读结果，避免设置页显示裸错误
-        return { ok: false, status: 0, message: errorText(err) };
+        return { ok: false, status: 0, message: errorText(err), latencyMs: Date.now() - t0 };
       });
     },
 

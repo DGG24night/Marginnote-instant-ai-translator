@@ -130,8 +130,8 @@ var MNIATFlow = (function () {
     var cfg = MNIATSettings.load();
     var uk = "";
     var us = "";
-    if (provider === "bing" || provider === "haici") {
-      // 必应/海词：解析结果自带英美发音链接
+    if (provider === "bing" || provider === "haici" || provider === "kingsoft") {
+      // 必应/海词/金山：解析结果自带英美发音链接
       uk = result.ukMp3 || "";
       us = result.usMp3 || "";
     } else {
@@ -160,34 +160,53 @@ var MNIATFlow = (function () {
   // 词典查词（含缓存）：
   // 缓存键 = 服务商:单词小写 —— 不同查词服务查同一单词不互用缓存；
   // 命中时用当前配置重建发音信息（口音/自动开关可能已变化）。
+  //
+  // 大小写约定（2026-08-12 用户实测反馈）：
+  //   - 金山词霸对大小写敏感（"Hard" = 哈德姓氏 / "hard" = 普通的形容词），
+  //     划词查到 "Hard" 时若直接发请求会被当姓氏解析；统一改用 lowercase
+  //     词发请求，确保拿到的是普通词条。
+  //   - 其他查词服务对大小写不敏感（必应/海词/有道），传小写无副作用。
+  //   - 缓存 key 始终用小写，避免 "Hard" 与 "hard" 命中两份独立但语义不同的缓存。
+  //
+  // bypassCache（2026-08-12 用户反馈）：
+  //   搜索框（searchWord）查询时设 true —— 跳过读写缓存，强制走网络。
+  //   解决"搜索 hard 时仍返回之前 Hard 的姓氏缓存"问题（同一 cacheKey 命中）。
   function runLookup(job, provider) {
     pushEvent({ type: "loading", mode: "lookup", text: job.text });
-    var word = String(job.text).trim();
-    var cacheKey = provider + ":" + word.toLowerCase();
+    var rawWord = String(job.text).trim();
+    var queryWord = (provider === "kingsoft") ? rawWord.toLowerCase() : rawWord;
+    var cacheKey = provider + ":" + rawWord.toLowerCase();
+    var bypassCache = !!job.bypassCache;
 
-    var cached = MNIATCache.get("lookup", cacheKey);
-    if (cached && cached.data) {
-      console.log("[MNIATFlow] lookup cache hit: " + provider + " / " + word);
-      finishLookup(job, provider, cached.data);
-      return;
+    if (!bypassCache) {
+      var cached = MNIATCache.get("lookup", cacheKey);
+      if (cached && cached.data) {
+        console.log("[MNIATFlow] lookup cache hit: " + provider + " / " + rawWord);
+        finishLookup(job, provider, cached.data);
+        return;
+      }
     }
 
     var lookupPromise = null;
     if (provider === "bing") {
-      lookupPromise = MNIATBing.lookup(word);
+      lookupPromise = MNIATBing.lookup(queryWord);
     } else if (provider === "haici") {
-      lookupPromise = MNIATHaiCi.lookup(word);
+      lookupPromise = MNIATHaiCi.lookup(queryWord);
+    } else if (provider === "kingsoft") {
+      lookupPromise = MNIATKingsoft.lookup(queryWord);
     } else {
-      lookupPromise = MNIATYoudao.lookup(word);
+      lookupPromise = MNIATYoudao.lookup(queryWord);
     }
 
     lookupPromise.then(function (result) {
       if (currentJob !== job) return; // 已被新任务取代
-      // meta 记录来源与单词，供历史记录展示（不同查词服务独立标签）
-      MNIATCache.put("lookup", cacheKey, {
-        data: result,
-        meta: { kind: "dict", provider: provider, sourceText: word }
-      });
+      if (!bypassCache) {
+        // meta 记录来源与单词（用户输入原样），供历史记录展示（不同查词服务独立标签）
+        MNIATCache.put("lookup", cacheKey, {
+          data: result,
+          meta: { kind: "dict", provider: provider, sourceText: rawWord }
+        });
+      }
       finishLookup(job, provider, result);
     }).catch(function (err) {
       if (currentJob !== job) return;
@@ -217,7 +236,11 @@ var MNIATFlow = (function () {
         ]
       });
     }
-    var promise = source === "bing" ? MNIATBing.lookup(word) : MNIATHaiCi.lookup(word);
+    var promise = null;
+    if (source === "bing") promise = MNIATBing.lookup(word);
+    else if (source === "haici") promise = MNIATHaiCi.lookup(word);
+    else if (source === "kingsoft") promise = MNIATKingsoft.lookup(word);
+    else promise = MNIATYoudao.lookup(word); // 默认有道（与 SettingsStore.aiExplainPronounce 默认值一致）
     return promise.then(function (result) {
       if (!result) return { url: "", fallbacks: [] };
       var url = accent === "uk" ? (result.ukMp3 || "") : (result.usMp3 || "");
@@ -322,7 +345,7 @@ var MNIATFlow = (function () {
       speakAIExplainWord(currentJob, "explain");
     } else if (item.type === "dict" && item.data) {
       var word = String(item.sourceText || "").trim();
-      var provider = item.provider === "bing" || item.provider === "haici"
+      var provider = item.provider === "bing" || item.provider === "haici" || item.provider === "kingsoft"
         ? item.provider
         : "youdao";
       currentJob = { mode: "lookup", text: word, win: win, session: null };
@@ -412,13 +435,15 @@ var MNIATFlow = (function () {
       return { switched: true };
     },
 
-    // 工具栏搜索框查询任意单词：使用默认查词服务提供商（config.lookupProvider）
+    // 工具栏搜索框查询任意单词：使用默认查词服务提供商（config.lookupProvider）。
+    // bypassCache=true（2026-08-12）：搜索不读也不写缓存，避免大小写版本命中已有
+    // 错误缓存（如曾划词查 "Hard" 拿到姓氏结果，再搜索 "hard" 会被同 cacheKey 命中）。
     searchWord: function (text) {
       var trimmed = String(text || "").trim();
       if (!trimmed) throw new Error("查询内容为空");
       var win = (currentJob && currentJob.win) || lastWin;
       this.cancelCurrent();
-      currentJob = { mode: "lookup", text: trimmed, win: win, session: null };
+      currentJob = { mode: "lookup", text: trimmed, win: win, session: null, bypassCache: true };
       pushEvent({ type: "reset" });
       this.startJob(currentJob);
       return { started: true };
@@ -430,7 +455,8 @@ var MNIATFlow = (function () {
       if (!currentJob) {
         throw new Error("当前没有进行中的任务");
       }
-      var valid = provider === "youdao" || provider === "bing" || provider === "haici" || provider === "ai";
+      var valid = provider === "youdao" || provider === "bing" || provider === "haici" ||
+        provider === "kingsoft" || provider === "ai";
       if (!valid) throw new Error("不支持的查词服务: " + provider);
       if (currentJob.session) {
         currentJob.session.cancel();

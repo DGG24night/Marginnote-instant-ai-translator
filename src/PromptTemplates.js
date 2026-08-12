@@ -4,9 +4,9 @@
 
 var MNIATPrompts = (function () {
   var DEFAULT_TRANSLATE =
-    "你是一名专业的学术翻译。请将以下{target_lang}之外的原文翻译成{target_lang}，" +
-    "要求准确、通顺、符合学术表达习惯。只输出译文，不要输出任何解释或额外内容。\n\n" +
-    "原文：\n{text}";
+    "你是一名专业的学术翻译。请将以下内容翻译为{target_lang}，" +
+    "要求准确、通顺、符合学术表达习惯。**只输出译文**，不要输出任何解释或额外内容。" +
+    "原文：{text}";
 
   var DEFAULT_EXPLAIN =
     "请严格按以下markdown格式输出单词{text}的解释：\n\n" +

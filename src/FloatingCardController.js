@@ -387,9 +387,8 @@ var MNIATFloatingCard = (function () {
       }
 
       var savedSize = rememberSizeEnabled() ? loadCardSize() : null;
-      // 图钉固定且开启「不跟随划词位置」：保留卡片当前位置（宽度/高度不变，仅跳过重新定位）
-      var pinStaysEnabled = pinned && !!(MNIATSettings.load().pinStays);
-      if (!pinStaysEnabled) {
+      // 图钉固定：卡片停留在当前位置，不跟随划词位置（固定行为，v0.7.2 起不再可配置）
+      if (!pinned) {
         applyCardFrame(c, computeFrame(anchorRect, studyController.view.bounds, savedSize), false);
       }
       if (!c.view.superview) {

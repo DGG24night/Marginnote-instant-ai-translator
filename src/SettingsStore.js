@@ -24,11 +24,10 @@ var MNIATSettings = (function () {
       fontSize: "medium",           // small | medium | large
       pronounceAuto: true,          // 查词后自动发音
       pronounceAccent: "us",        // uk | us
-      lookupProvider: "youdao",     // youdao | bing | haici | ai（查词服务提供商；ai = 直接用 AI 解释）
-      aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing
+      lookupProvider: "youdao",     // youdao | bing | haici | kingsoft | ai（查词服务提供商；ai = 直接用 AI 解释）
+      aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
-      pinStays: true,               // 图钉固定后：卡片停留在当前位置，不跟随划词位置（默认开启）
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
