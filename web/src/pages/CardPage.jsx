@@ -154,6 +154,8 @@ function CardPage() {
   const historyPanelRef = useRef(null); // 历史记录面板（打开时测量内容高度，卡片自适应变高）
   const regenTimerRef = useRef(null); // 重新生成按钮长按计时
   const regenLongPressRef = useRef(false); // 长按已触发（抑制随后的 click）
+  const regenTouchAtRef = useRef(0); // 最近一次触摸时间戳：触摸后的合成 mouse 事件（500ms 窗口内）一律忽略
+  const regenTouchCleanupRef = useRef(null); // 按钮卸载时解绑原生 touch 监听
   const { config, load } = useConfigStore();
 
   // 显示发音提示，几秒后自动消失
@@ -251,22 +253,35 @@ function CardPage() {
     }
   }, []);
 
-  const onRegenerateMouseDown = () => {
-    regenLongPressRef.current = false;
-    if (regenTimerRef.current) clearTimeout(regenTimerRef.current);
-    // 长按 600ms 打开模型选择列表
-    regenTimerRef.current = setTimeout(() => {
-      regenLongPressRef.current = true;
-      load(); // 打开前刷新提供商/模型列表（设置页可能已改）
-      setModelPickerOpen(true);
-    }, 600);
-  };
+  // 长按阈值 400ms：UIWebView 的系统长按手势约 500ms 识别，
+  // 提前触发可避免系统手势抢先、以及用户过早抬手导致计时未到
+  const REGEN_LONG_PRESS_MS = 400;
 
-  const onRegenerateMouseUp = () => {
+  const clearRegenTimer = () => {
     if (regenTimerRef.current) {
       clearTimeout(regenTimerRef.current);
       regenTimerRef.current = null;
     }
+  };
+
+  // 触摸结束后的 500ms 窗口内，UIWebView 会补发合成 mouse 事件（mousedown/mouseup/click）。
+  // 一律忽略，避免长按打开模型列表后又被误关、或单击重复触发重新生成。
+  const isRecentTouch = () => Date.now() - regenTouchAtRef.current < 500;
+
+  const onRegenerateMouseDown = () => {
+    if (isRecentTouch()) return;
+    regenLongPressRef.current = false;
+    clearRegenTimer();
+    regenTimerRef.current = setTimeout(() => {
+      regenLongPressRef.current = true;
+      load(); // 打开前刷新提供商/模型列表（设置页可能已改）
+      setModelPickerOpen(true);
+    }, REGEN_LONG_PRESS_MS);
+  };
+
+  const onRegenerateMouseUp = () => {
+    if (isRecentTouch()) return;
+    clearRegenTimer();
     if (regenLongPressRef.current) {
       regenLongPressRef.current = false;
       return; // 长按已触发选模型，点击不重复重新生成
@@ -275,12 +290,97 @@ function CardPage() {
   };
 
   const onRegenerateMouseLeave = () => {
-    if (regenTimerRef.current) {
-      clearTimeout(regenTimerRef.current);
-      regenTimerRef.current = null;
-    }
+    if (isRecentTouch()) return;
+    clearRegenTimer();
     if (regenLongPressRef.current) regenLongPressRef.current = false;
   };
+
+  // iPad 手指 / Apple Pencil 触摸长按支持（MarginNote WebView 为 UIWebView，无 Pointer Events）：
+  // 1) iOS 触摸不会立即合成 mousedown（系统先做手势判定），基于 onMouseDown 的计时器启动不了；
+  // 2) 按钮是条件渲染的，挂载时才出现 —— 必须用 callback ref 在按钮挂载/卸载时动态绑定/解绑，
+  //    否则触摸监听绑定时机与按钮渲染脱节（上一版 useEffect 只在组件挂载时跑一次，条件渲染场景漏绑）。
+  const bindRegenTouch = useCallback(
+    (el) => {
+      if (regenTouchCleanupRef.current) {
+        regenTouchCleanupRef.current();
+        regenTouchCleanupRef.current = null;
+      }
+      if (!el) return;
+
+      let active = false; // 当前触摸是否仍停留在按钮上
+
+      const onTouchStart = (e) => {
+        regenTouchAtRef.current = Date.now();
+        active = true;
+        regenLongPressRef.current = false;
+        clearRegenTimer();
+        if (e.cancelable) e.preventDefault(); // 抑制系统长按手势（放大镜/选词/callout）
+        regenTimerRef.current = setTimeout(() => {
+          if (!active) return;
+          regenLongPressRef.current = true;
+          load(); // 打开前刷新提供商/模型列表（设置页可能已改）
+          setModelPickerOpen(true);
+        }, REGEN_LONG_PRESS_MS);
+      };
+
+      const onTouchMove = (e) => {
+        // 仅当触摸点明显移出按钮区域（带 12px 容差，容忍手指抖动）才取消长按
+        const t = e.touches && e.touches[0];
+        if (t) {
+          const r = el.getBoundingClientRect();
+          if (
+            t.clientX >= r.left - 12 &&
+            t.clientX <= r.right + 12 &&
+            t.clientY >= r.top - 12 &&
+            t.clientY <= r.bottom + 12
+          ) {
+            return;
+          }
+        }
+        active = false; // 滑出按钮：视为取消长按
+        clearRegenTimer();
+      };
+
+      const onTouchEnd = () => {
+        regenTouchAtRef.current = Date.now();
+        const wasLong = regenLongPressRef.current;
+        const wasActive = active;
+        active = false;
+        clearRegenTimer();
+        if (wasLong) {
+          regenLongPressRef.current = false;
+          return; // 长按已打开选模型，抬起不再触发重新生成
+        }
+        if (wasActive) {
+          regenerate(null); // 单击 → 重新生成
+        }
+      };
+
+      const onTouchCancel = () => {
+        regenTouchAtRef.current = Date.now();
+        active = false;
+        clearRegenTimer();
+        if (regenLongPressRef.current) regenLongPressRef.current = false;
+      };
+
+      try {
+        el.addEventListener("touchstart", onTouchStart, { passive: false });
+      } catch (err) {
+        // 极老引擎不支持 options 对象，退化为 capture 参数
+        el.addEventListener("touchstart", onTouchStart, false);
+      }
+      el.addEventListener("touchmove", onTouchMove, { passive: true });
+      el.addEventListener("touchend", onTouchEnd);
+      el.addEventListener("touchcancel", onTouchCancel);
+      regenTouchCleanupRef.current = () => {
+        el.removeEventListener("touchstart", onTouchStart);
+        el.removeEventListener("touchmove", onTouchMove);
+        el.removeEventListener("touchend", onTouchEnd);
+        el.removeEventListener("touchcancel", onTouchCancel);
+      };
+    },
+    [load, regenerate]
+  );
 
   // ---------- 搜索框 ----------
 
@@ -710,6 +810,7 @@ function CardPage() {
             </button>
             {canRegenerate && (
               <button
+                ref={bindRegenTouch}
                 className="icon-btn regen-btn"
                 title="点击重新生成；长按选择模型"
                 onMouseDown={onRegenerateMouseDown}

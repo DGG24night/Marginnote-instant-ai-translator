@@ -830,6 +830,14 @@ html.card-fit .card-body {
   height: 15px;
 }
 
+/* 重新生成按钮：触摸点击无延迟；禁止长按选中/系统 callout（UIWebView 长按会弹系统菜单） */
+.regen-btn {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ---------- 下拉菜单（查词服务切换 / 重新生成选模型） ---------- */
 
 /* 通用遮罩：点击菜单外部关闭；透明，不影响顶部原生拖动条 */

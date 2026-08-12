@@ -1,5 +1,14 @@
 # 更新日志
 
+## v0.7.1（2026-08-12）
+
+### 修复
+
+- **重新生成长按在 iPad 触摸设备上失效**（二次修复）：鼠标长按可弹出模型选择列表，但手指 / Apple Pencil 长按无效。
+  - 根因一：按钮是条件渲染（结果出现后才出现），上一版用 `useEffect` 只在组件挂载时绑定触摸监听，按钮后出现时监听未绑定 → 触摸长按永远无效（鼠标用 React 属性随渲染绑定所以正常）。
+  - 根因二：MarginNote 插件 WebView 为 **UIWebView**，无 Pointer Events，且系统长按手势约 500ms 识别，会与自定义长按竞争。
+  - 修复：改用 **callback ref** 在按钮挂载 / 卸载时动态绑定、解绑原生 touch 事件（`touchstart` 启动 400ms 计时并 `preventDefault` 抑制系统手势，`touchmove` 移出按钮才取消，`touchend` 区分单击 / 长按）；长按阈值 600ms → 400ms 提前于系统手势；触摸结束后 500ms 窗口内忽略补发的合成 mouse 事件（防止模型列表被误关 / 重复触发）；CSS 增加 `-webkit-touch-callout: none`、`user-select: none` 抑制系统长按菜单。
+
 ## v0.7.0（2026-08-11）
 
 ### 新功能
