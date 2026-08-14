@@ -445,6 +445,11 @@ var MNIATFloatingCard = (function () {
       applyCardFrame(controller, { x: f.x, y: y, width: f.width, height: h }, false);
     },
 
+    // 卡片高度上下限（供前端 cardReady 获取，测量结果按此钳制上报）
+    limits: function () {
+      return { minHeight: CARD_MIN_HEIGHT, maxHeight: CARD_MAX_HEIGHT };
+    },
+
     hide: function () {
       if (focusTimer) {
         focusTimer.invalidate();

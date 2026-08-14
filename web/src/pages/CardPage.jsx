@@ -156,6 +156,7 @@ function CardPage() {
   const regenLongPressRef = useRef(false); // 长按已触发（抑制随后的 click）
   const regenTouchAtRef = useRef(0); // 最近一次触摸时间戳：触摸后的合成 mouse 事件（500ms 窗口内）一律忽略
   const regenTouchCleanupRef = useRef(null); // 按钮卸载时解绑原生 touch 监听
+  const cardLimitsRef = useRef(null); // 卡片高度上下限 { min, max }（cardReady 返回，测量钳制用）
   const { config, load } = useConfigStore();
 
   // 显示发音提示，几秒后自动消失
@@ -432,6 +433,12 @@ function CardPage() {
     regenerate({ providerId, modelId });
   };
 
+  // 长按选「机器翻译服务」：临时切换机器翻译提供商重跑当前翻译（不写回 machineRouting 配置）
+  const pickMachine = (machineProviderId) => {
+    setModelPickerOpen(false);
+    regenerate({ machineProviderId });
+  };
+
   useEffect(() => {
     // 卡片模式：高度由内容决定（配合 styles.css 的 html.card-fit）
     document.documentElement.classList.add("card-fit");
@@ -449,6 +456,8 @@ function CardPage() {
       // 卡片 WebView 常驻复用，设置页里改的字号/主题需要在此重新拉取才会生效
       if (event.type === "reset" || event.type === "loading") {
         load();
+        // 新任务开始：清除上一任务的卡片高度基准，高度从当前内容重新测量增长
+        lastHeightRef.current = 0;
       }
 
       setState((prev) => {
@@ -523,7 +532,17 @@ function CardPage() {
     load().finally(() => {
       if (!readySentRef.current) {
         readySentRef.current = true;
-        MNBridge.send("cardReady").catch(() => {});
+        MNBridge.send("cardReady")
+          .then((r) => {
+            // 记录卡片高度上下限：测量结果按此钳制（打字机渐进增长封顶依赖 maxHeight）
+            if (r && typeof r.maxHeight === "number") {
+              cardLimitsRef.current = {
+                min: typeof r.minHeight === "number" ? r.minHeight : 80,
+                max: r.maxHeight,
+              };
+            }
+          })
+          .catch(() => {});
       }
     });
 
@@ -567,61 +586,98 @@ function CardPage() {
   // 下拉菜单（查词服务切换 / 重新生成选模型）打开时，若卡片高度不足会裁掉菜单底部选项，
   // 这里把「菜单底部所需高度」计入，让卡片自动变高；菜单关闭后随内容高度回落。
   const lastHeightRef = useRef(0);
+  // 最新测量函数：每次渲染重建（闭包读取最新 state/菜单开关）。
+  // 定时器统一经 doMeasureRef 调用，避免定时器随 state 变化被反复重建
+  // （v0.7.5 教训：interval 放在依赖 state 的 effect 里，每 30ms 的 delta
+  // 都会清掉未到期的定时器，测量被无限推迟，卡片高度最后一次性展开）。
+  const doMeasureRef = useRef(null);
+  doMeasureRef.current = () => {
+    const isText = state.status === "streaming" || state.status === "done";
+    const toolbarH = toolbarRef.current ? toolbarRef.current.offsetHeight : 0;
+    // 发音提示条（toolbar 下方）出现时占高，需计入
+    const hintEl = document.querySelector(".pronounce-hint");
+    const hintH = hintEl ? hintEl.offsetHeight : 0;
+    let height = 0;
+    if (isText && measureRef.current) {
+      // .card-measure 自带与 .card-body 一致的 padding，直接量即可
+      height = measureRef.current.offsetHeight + toolbarH + hintH;
+    } else if (state.status === "dict" && dictRef.current) {
+      // .dict-result 自身高度不含 .card-body 的上下 padding（12+12px），
+      // 漏算会导致卡片高度偏小、最后一行被裁剪（查词卡片"遮半行"根因）
+      const bodyEl = dictRef.current.parentElement;
+      const padV = bodyEl
+        ? (parseFloat(getComputedStyle(bodyEl).paddingTop) || 0) +
+          (parseFloat(getComputedStyle(bodyEl).paddingBottom) || 0)
+        : 24;
+      height = dictRef.current.offsetHeight + padV + toolbarH + hintH;
+    } else {
+      height = document.body.scrollHeight;
+    }
+    // 下拉菜单打开：确保卡片高度 ≥ 菜单顶部偏移(46) + 菜单高度 + 底部边距(8)
+    const menuEl = switchOpen ? switchMenuRef.current : modelPickerOpen ? modelPickerRef.current : null;
+    if (menuEl) {
+      const menuBottom = 46 + menuEl.offsetHeight + 8;
+      if (height < menuBottom) height = menuBottom;
+    }
+    // 历史记录面板打开：卡片高度自适应历史记录数量。
+    // 注意：不能量 .history-panel 自身的 scrollHeight —— 面板是 overflow:hidden 的
+    // flex 容器且带 max-height，卡片矮时内容被压缩，scrollHeight 只反映被裁剪后的
+    // 可见高度，永远撑不大卡片。改为量列表容器 .history-list 的 scrollHeight
+    // （滚动容器内容总高不受裁剪影响）+ 标题栏高度，算出面板内容自然高度。
+    if (historyOpen && historyPanelRef.current) {
+      const panelEl = historyPanelRef.current;
+      const headEl = panelEl.querySelector(".history-panel-head");
+      const listEl = panelEl.querySelector(".history-list");
+      const emptyEl = panelEl.querySelector(".history-empty");
+      const headH = headEl ? headEl.offsetHeight : 0;
+      const contentH = listEl
+        ? listEl.scrollHeight
+        : emptyEl ? emptyEl.offsetHeight : 0;
+      const panelH = headH + contentH + 8; // 面板上下 padding 4+4
+      const panelBottom = 46 + panelH + 8;
+      if (height < panelBottom) height = panelBottom;
+    }
+    height = Math.ceil(height);
+
+    // 打字机期间高度只增不减：delta 每 30ms 到达，markdown 局部渲染（如代码块/标题
+    // 未闭合）可能让测量高度短暂回缩，强制单调递增可避免卡片上下抖动，保证「逐渐、
+    // 平滑增大」；完成（done）后按最终内容精确落位。
+    if (state.status === "streaming" && height < lastHeightRef.current) {
+      height = lastHeightRef.current;
+    }
+
+    // 按卡片高度上下限钳制（cardReady 返回）：避免超过原生最大高度导致溢出
+    const limits = cardLimitsRef.current || { min: 80, max: 420 };
+    height = Math.max(limits.min, Math.min(height, limits.max));
+
+    if (height > 0 && Math.abs(height - lastHeightRef.current) > 2) {
+      lastHeightRef.current = height;
+      MNBridge.send("resizeCard", { height }).catch(() => {});
+    }
+  };
+
+  // 打字机期间（delta 每 30ms 到达）：固定间隔轮询测量，与渲染/事件节奏解耦，
+  // 卡片高度随逐字输出同步渐进增长。
+  // 关键：定时器只在「进入/退出 streaming」时启停（依赖仅 isStreaming），
+  // 回调经 doMeasureRef 读取最新测量上下文——若依赖整个 state，每 30ms 的
+  // delta 都会重建 interval，测量将永远无法触发（v0.7.5 已踩坑）。
+  const isStreaming = state.status === "streaming";
   useEffect(() => {
+    if (!isStreaming) return undefined;
+    const interval = setInterval(() => {
+      if (doMeasureRef.current) doMeasureRef.current();
+    }, 60);
+    return () => clearInterval(interval);
+  }, [isStreaming]);
+
+  // 非 streaming（done / 词典 / 加载 / 菜单 / 历史面板等）：状态稳定后一次性测量
+  useEffect(() => {
+    if (isStreaming) return undefined;
     const timer = setTimeout(() => {
-      const isText = state.status === "streaming" || state.status === "done";
-      const toolbarH = toolbarRef.current ? toolbarRef.current.offsetHeight : 0;
-      // 发音提示条（toolbar 下方）出现时占高，需计入
-      const hintEl = document.querySelector(".pronounce-hint");
-      const hintH = hintEl ? hintEl.offsetHeight : 0;
-      let height = 0;
-      if (isText && measureRef.current) {
-        // .card-measure 自带与 .card-body 一致的 padding，直接量即可
-        height = measureRef.current.offsetHeight + toolbarH + hintH;
-      } else if (state.status === "dict" && dictRef.current) {
-        // .dict-result 自身高度不含 .card-body 的上下 padding（12+12px），
-        // 漏算会导致卡片高度偏小、最后一行被裁剪（查词卡片"遮半行"根因）
-        const bodyEl = dictRef.current.parentElement;
-        const padV = bodyEl
-          ? (parseFloat(getComputedStyle(bodyEl).paddingTop) || 0) +
-            (parseFloat(getComputedStyle(bodyEl).paddingBottom) || 0)
-          : 24;
-        height = dictRef.current.offsetHeight + padV + toolbarH + hintH;
-      } else {
-        height = document.body.scrollHeight;
-      }
-      // 下拉菜单打开：确保卡片高度 ≥ 菜单顶部偏移(46) + 菜单高度 + 底部边距(8)
-      const menuEl = switchOpen ? switchMenuRef.current : modelPickerOpen ? modelPickerRef.current : null;
-      if (menuEl) {
-        const menuBottom = 46 + menuEl.offsetHeight + 8;
-        if (height < menuBottom) height = menuBottom;
-      }
-      // 历史记录面板打开：卡片高度自适应历史记录数量。
-      // 注意：不能量 .history-panel 自身的 scrollHeight —— 面板是 overflow:hidden 的
-      // flex 容器且带 max-height，卡片矮时内容被压缩，scrollHeight 只反映被裁剪后的
-      // 可见高度，永远撑不大卡片。改为量列表容器 .history-list 的 scrollHeight
-      // （滚动容器内容总高不受裁剪影响）+ 标题栏高度，算出面板内容自然高度。
-      if (historyOpen && historyPanelRef.current) {
-        const panelEl = historyPanelRef.current;
-        const headEl = panelEl.querySelector(".history-panel-head");
-        const listEl = panelEl.querySelector(".history-list");
-        const emptyEl = panelEl.querySelector(".history-empty");
-        const headH = headEl ? headEl.offsetHeight : 0;
-        const contentH = listEl
-          ? listEl.scrollHeight
-          : emptyEl ? emptyEl.offsetHeight : 0;
-        const panelH = headH + contentH + 8; // 面板上下 padding 4+4
-        const panelBottom = 46 + panelH + 8;
-        if (height < panelBottom) height = panelBottom;
-      }
-      height = Math.ceil(height);
-      if (height > 0 && Math.abs(height - lastHeightRef.current) > 2) {
-        lastHeightRef.current = height;
-        MNBridge.send("resizeCard", { height }).catch(() => {});
-      }
+      if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems, isStreaming]);
 
   // 复制当前结果文本（工具栏复制按钮已移除，改为结果卡片内双击自动复制）
   const copyResult = async (e) => {
@@ -974,8 +1030,8 @@ function CardPage() {
         <div className="menu-overlay" onMouseDown={() => setModelPickerOpen(false)}>
           <div className="model-picker" ref={modelPickerRef} onMouseDown={(e) => e.stopPropagation()}>
             <div className="model-picker-title">选择模型重新生成</div>
-            {config.providers.length === 0 && (
-              <div className="model-picker-empty">暂无可用的 AI 服务提供商，请先在设置中添加。</div>
+            {config.providers.length === 0 && config.machineProviders.length === 0 && (
+              <div className="model-picker-empty">暂无可用的服务提供商，请先在设置中添加。</div>
             )}
             {config.providers.map((p) => (
               <div className="model-picker-group" key={p.id}>
@@ -1009,6 +1065,36 @@ function CardPage() {
                 )}
               </div>
             ))}
+            {/* 机器翻译服务（仅翻译任务且已配置账户时显示）：整体作为一项可选服务，点击即用该账户重跑翻译 */}
+            {state.mode === "translate" && config.machineProviders.length > 0 && (
+              <div className="model-picker-group">
+                <div
+                  className="model-picker-provider"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => toggleProvider("__mt__")}
+                  title={collapsedProviders["__mt__"] ? "展开" : "折叠"}
+                >
+                  <span className={`model-picker-caret ${collapsedProviders["__mt__"] ? "" : "is-open"}`}>▶</span>
+                  <span className="model-picker-provider-name">机器翻译服务</span>
+                  <span className="model-picker-count">{config.machineProviders.length}</span>
+                </div>
+                {!collapsedProviders["__mt__"] && (
+                  <div className="model-picker-models">
+                    {config.machineProviders.map((mp) => (
+                      <button
+                        key={mp.id}
+                        className="model-picker-item"
+                        title={`${mp.name}（接口类型与领域按「模型路由 → 机器翻译路由」配置）`}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => pickMachine(mp.id)}
+                      >
+                        {mp.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

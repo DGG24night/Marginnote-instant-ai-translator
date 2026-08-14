@@ -161,20 +161,31 @@ var MNIATFlow = (function () {
   //   config.translateService === "machine" 时，句子/段落翻译走此路径；
   //   provider/apiType/domain 来自 config.machineRouting + machineProviders；
   //   按 provider.vendor 分派到对应服务（baidu → MNIATBaiduMT，niutrans → MNIATNiuTrans，
-  //   aliyun → MNIATAliyunMT，tencent → MNIATTencentMT）；
+  //   aliyun → MNIATAliyunMT，tencent → MNIATTencentMT，volcengine → MNIATVolcengineMT）；
   //   缓存：翻译缓存，键 = mt:<providerId>:<vendor>:<apiType>[:<domain|scene>]:text；
   //   重新生成（bypassCache=true）跳过读取，新结果仍写入缓存覆盖旧值。
+  //   打字机效果（2026-08-14）：streamMode 开启时，返回结果经 MNIAIService.simulateTyping
+  //   逐字推送 delta 事件（与 AI 翻译同一通道），播完再推 translateResult；关闭时保持
+  //   一次性整体展示。缓存命中仍直接整体展示（与 AI 缓存命中行为一致）。
+  //   machineOverride（2026-08-14，长按「重新生成」选机器翻译服务）：{ machineProviderId }
+  //   临时覆盖机器翻译提供商（不写回 machineRouting），apiType/domain/scene 仍取路由配置。
   function runMachineTranslate(job, opts) {
     opts = opts || {};
     var cfg = MNIATSettings.load();
     var routing = cfg.machineRouting || {};
     var provider = null;
     var providers = cfg.machineProviders || [];
+    // 提供商解析：优先「重新生成选模型」的临时覆盖，其次路由配置
+    var targetId = (opts.machineOverride && opts.machineOverride.machineProviderId) || routing.providerId;
     for (var i = 0; i < providers.length; i++) {
-      if (providers[i].id === routing.providerId) {
+      if (providers[i].id === targetId) {
         provider = providers[i];
         break;
       }
+    }
+    if (!provider) {
+      pushEvent({ type: "error", message: "未配置机器翻译服务：请先在设置「机器翻译服务」中添加账户" });
+      return;
     }
     // 校验密钥：阿里云用 AccessKeySecret，腾讯云用 secretId/secretKey，火山用 accessKeyId/secretAccessKey，其他用 secretKey/apiKey
     var vendor = provider.vendor === "niutrans" ? "niutrans" :
@@ -267,7 +278,27 @@ var MNIATFlow = (function () {
             meta: { kind: "translate", provider: provider.id, sourceText: text }
           });
         }
-        pushEvent({ type: "translateResult", text: out });
+        // 打字机效果：与 AI 翻译同一 delta 通道逐字输出，播完再推完成事件。
+        // job.session 挂载打字机句柄：新任务/重新生成时 cancelCurrent/regenerate 会取消计时器。
+        if (cfg.streamMode !== false) {
+          if (job.session) {
+            try { job.session.cancel(); } catch (e) { /* 忽略 */ }
+            job.session = null;
+          }
+          job.session = MNIAIService.simulateTyping(out, {
+            onDelta: function (delta, accumulated) {
+              if (currentJob !== job) return;
+              pushEvent({ type: "delta", accumulated: accumulated });
+            },
+            onDone: function (full) {
+              if (currentJob !== job) return;
+              job.session = null;
+              pushEvent({ type: "translateResult", text: full });
+            }
+          });
+        } else {
+          pushEvent({ type: "translateResult", text: out });
+        }
       } else {
         pushEvent({ type: "error", message: "机器翻译返回为空，请稍后重试" });
       }
@@ -600,7 +631,9 @@ var MNIATFlow = (function () {
     },
 
     // 「重新生成」：重跑当前 AI 翻译/解释任务，跳过缓存；
-    // override = { providerId, modelId }（长按选模型时传入，临时覆盖，不写回配置）
+    // override = { providerId, modelId }（AI 提供商，长按选模型时传入，临时覆盖，不写回配置）
+    //          | { machineProviderId }（机器翻译服务，长按选模型时传入，临时覆盖，不写回 machineRouting）
+    // 路由优先级：显式机器翻译覆盖 > 显式 AI 覆盖 > 常规设置「翻译服务」（machine → 机器翻译，否则 AI）。
     regenerate: function (override) {
       if (!currentJob) {
         throw new Error("当前没有进行中的任务");
@@ -616,13 +649,23 @@ var MNIATFlow = (function () {
       var promptKind = currentJob.mode === "explain" ? "explain" : "translate";
       pushEvent({ type: "reset" });
       pushEvent({ type: "loading", mode: currentJob.mode, text: currentJob.text });
-      // 机器翻译模式下：重新生成 = 重跑机器翻译（跳过缓存）
-      if (currentJob.mode === "translate" &&
-        MNIATSettings.load().translateService === "machine") {
-        runMachineTranslate(currentJob, { bypassCache: true });
+
+      // 拆分两类覆盖：机器翻译（machineProviderId）与 AI（providerId+modelId），避免串用
+      var machineOverride = (override && override.machineProviderId)
+        ? { machineProviderId: String(override.machineProviderId) }
+        : null;
+      var aiOverride = (override && override.providerId)
+        ? { providerId: String(override.providerId), modelId: String(override.modelId || "") }
+        : null;
+
+      // 翻译任务走机器翻译的条件：用户显式选了机器翻译服务，或常规设置默认就是机器翻译（且未显式选 AI 模型）
+      var useMachine = currentJob.mode === "translate" &&
+        (!!machineOverride || (MNIATSettings.load().translateService === "machine" && !aiOverride));
+      if (useMachine) {
+        runMachineTranslate(currentJob, { bypassCache: true, machineOverride: machineOverride });
         return { regenerated: true };
       }
-      runAI(currentJob, kind, promptKind, { bypassCache: true, override: override });
+      runAI(currentJob, kind, promptKind, { bypassCache: true, override: aiOverride });
       return { regenerated: true };
     },
 

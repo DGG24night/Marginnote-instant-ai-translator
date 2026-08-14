@@ -66,14 +66,40 @@ var MNIATSelectionMonitor = (function () {
     return null;
   }
 
-  // 一次性诊断：菜单弹出却读不到选中文本时，用 HUD 显示内部状态，
-  // 帮助定位"辅助摘录选区是否写入 selectionText"（console 日志不可见）。
+  // 回退读取：选中「已创建摘录的文本」时，MarginNote 进入摘录笔记选中态，
+  // 文本选区接口 selectionText 为空（isSelectionText=false），但被选中的摘录
+  // 即当前焦点笔记，其 excerptText 就是用户选中的文本。
+  // 仅菜单弹出时启用（见 tick），避免用户无操作时误读脑图/其他文档的焦点笔记；
+  // 只信任来自当前文档（docMd5 一致）的摘录。
+  function readFocusNoteExcerpt() {
+    try {
+      var docController = readDocController();
+      if (!docController) return null;
+      var note = docController.visibleFocusNote ||
+        docController.focusNote ||
+        docController.lastFocusNote;
+      if (!note) return null;
+      // 只信任来自当前文档的摘录，避免误读其他文档/脑图焦点笔记
+      if (note.docMd5 && docController.docMd5 && note.docMd5 !== docController.docMd5) {
+        return null;
+      }
+      if (note.excerptText) {
+        var text = String(note.excerptText).trim();
+        return text.length > 0 ? text : null;
+      }
+    } catch (e) { /* 忽略 */ }
+    return null;
+  }
+
+  // 一次性诊断：菜单弹出但「文本选区 + 焦点笔记摘录回退」都读不到文本时，
+  // 用 HUD 显示内部状态，帮助定位未知选区场景（console 日志不可见）。
   var menuWasVisible = false;
   var lastDiagAt = 0;
 
   function diagnoseIfNeeded(menuVisibleNow) {
     if (menuVisibleNow && !menuWasVisible) {
       var text = readSelectionText();
+      if (!text) text = readFocusNoteExcerpt();
       if (!text && Date.now() - lastDiagAt > 3000) {
         lastDiagAt = Date.now();
         try {
@@ -81,8 +107,10 @@ var MNIATSelectionMonitor = (function () {
           var info = "无 docController";
           if (dc) {
             var st = dc.selectionText;
+            var fn = dc.visibleFocusNote || dc.focusNote || dc.lastFocusNote;
             info = "isSelectionText=" + dc.isSelectionText +
-              ", selectionText=" + (st ? ("len " + String(st).length) : String(st));
+              ", selectionText=" + (st ? ("len " + String(st).length) : String(st)) +
+              ", focusNoteExcerpt=" + (fn && fn.excerptText ? ("len " + String(fn.excerptText).length) : "无");
           }
           Application.sharedInstance().showHUD("[翻译插件诊断] " + info, targetWindow, 3);
         } catch (e) { /* 忽略 */ }
@@ -135,6 +163,12 @@ var MNIATSelectionMonitor = (function () {
     diagnoseIfNeeded(menuVisibleNow);
 
     var text = readSelectionText();
+    // 菜单弹出却无文本选区：可能是选中了「已创建摘录的文本」（摘录笔记选中态），
+    // 此时 selectionText 为空，但被选中的摘录即当前焦点笔记，回退读取其摘录文本，
+    // 使摘录内容同样能触发翻译/查词。无菜单弹出时不回退，避免误读焦点笔记。
+    if (!text && menuVisibleNow) {
+      text = readFocusNoteExcerpt();
+    }
 
     if (!text) {
       // 选区清空

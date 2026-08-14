@@ -79,7 +79,13 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
 
   function cardReady() {
     MNIATFlow.onCardReady();
-    return { acknowledged: true };
+    // 返回卡片高度上下限：前端测量后按此钳制（打字机渐进增长封顶依赖 maxHeight）
+    var limits = MNIATFloatingCard.limits();
+    return {
+      acknowledged: true,
+      minHeight: limits.minHeight,
+      maxHeight: limits.maxHeight
+    };
   }
 
   function closeCard() {
@@ -131,11 +137,19 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
   }
 
   // 「重新生成」：点击重跑当前 AI 翻译/解释（跳过缓存）；
-  // 长按选模型时 payload = { providerId, modelId }（临时覆盖，不写回路由配置）
+  // 长按选模型时 payload 二选一：
+  //   { providerId, modelId }      —— AI 提供商（临时覆盖，不写回路由配置）
+  //   { machineProviderId }        —— 机器翻译服务（临时覆盖，不写回 machineRouting）
   function regenerate(context, payload) {
-    var override = payload && payload.providerId
-      ? { providerId: String(payload.providerId), modelId: String(payload.modelId || "") }
-      : null;
+    var override = null;
+    if (payload && payload.machineProviderId) {
+      override = { machineProviderId: String(payload.machineProviderId) };
+    } else if (payload && payload.providerId) {
+      override = {
+        providerId: String(payload.providerId),
+        modelId: String(payload.modelId || "")
+      };
+    }
     return MNIATFlow.regenerate(override);
   }
 

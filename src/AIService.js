@@ -291,6 +291,50 @@ var MNIAIService = (function () {
   var SIM_INTERVAL_MS = 30;  // 打字机 tick 间隔
   var SIM_MAX_TICKS = 100;   // 最大 tick 数（总打字时长约 3s；文本越长单 tick 步长越大）
 
+  // 打字机模拟（AI 翻译/解释与机器翻译共用）：
+  //   把完整文本 full 按 tick 分批推送 handlers.onDelta(delta, accumulated)，
+  //   播完回调 handlers.onDone(accumulated)。返回 { cancel() }，取消后不再推送。
+  //   步长自适应：短文本逐字，长文本大步长，总时长控制在 ~3s。
+  function simulateTyping(full, handlers) {
+    handlers = handlers || {};
+    var state = {
+      cancelled: false,
+      finished: false,
+      accumulated: "",
+      simTimer: null
+    };
+
+    function cancel() {
+      if (state.cancelled) return;
+      state.cancelled = true;
+      if (state.simTimer) {
+        state.simTimer.invalidate();
+        state.simTimer = null;
+      }
+    }
+
+    var step = Math.max(3, Math.ceil(full.length / SIM_MAX_TICKS));
+    var pos = 0;
+    function tickFn() {
+      if (state.cancelled) return;
+      var next = Math.min(pos + step, full.length);
+      var chunk = full.slice(pos, next);
+      state.accumulated += chunk;
+      if (handlers.onDelta) handlers.onDelta(chunk, state.accumulated);
+      pos = next;
+      if (pos >= full.length) {
+        state.finished = true;
+        state.simTimer = null;
+        if (handlers.onDone) handlers.onDone(state.accumulated);
+      } else {
+        state.simTimer = NSTimer.scheduledTimerWithTimeInterval(SIM_INTERVAL_MS / 1000, false, tickFn);
+      }
+    }
+    state.simTimer = NSTimer.scheduledTimerWithTimeInterval(SIM_INTERVAL_MS / 1000, false, tickFn);
+
+    return { cancel: cancel };
+  }
+
   // 非流式请求：一次性拿完整结果（streamMode=false 时直接用）
   function runOnce(provider, route, prompt, handlers) {
     var body = buildBody(provider, route.modelId, route, prompt);
@@ -323,40 +367,16 @@ var MNIAIService = (function () {
   function runSimulatedStreaming(provider, route, prompt, handlers) {
     var state = {
       cancelled: false,
-      finished: false,
-      accumulated: "",
-      simTimer: null
+      typing: null // simulateTyping 返回的 { cancel() }
     };
 
     function cancel() {
       if (state.cancelled) return;
       state.cancelled = true;
-      if (state.simTimer) {
-        state.simTimer.invalidate();
-        state.simTimer = null;
+      if (state.typing) {
+        state.typing.cancel();
+        state.typing = null;
       }
-    }
-
-    function simulateTyping(full) {
-      // 步长自适应：短文本逐字，长文本大步长，总时长控制在 ~3s
-      var step = Math.max(3, Math.ceil(full.length / SIM_MAX_TICKS));
-      var pos = 0;
-      function tickFn() {
-        if (state.cancelled) return;
-        var next = Math.min(pos + step, full.length);
-        var chunk = full.slice(pos, next);
-        state.accumulated += chunk;
-        if (handlers.onDelta) handlers.onDelta(chunk, state.accumulated);
-        pos = next;
-        if (pos >= full.length) {
-          state.finished = true;
-          state.simTimer = null;
-          if (handlers.onDone) handlers.onDone(state.accumulated);
-        } else {
-          state.simTimer = NSTimer.scheduledTimerWithTimeInterval(SIM_INTERVAL_MS / 1000, false, tickFn);
-        }
-      }
-      state.simTimer = NSTimer.scheduledTimerWithTimeInterval(SIM_INTERVAL_MS / 1000, false, tickFn);
     }
 
     var body = buildBody(provider, route.modelId, route, prompt);
@@ -372,7 +392,17 @@ var MNIAIService = (function () {
       if (res.status >= 200 && res.status < 300) {
         var content = extractContent(res.json());
         if (content && content.trim().length > 0) {
-          simulateTyping(content);
+          state.typing = simulateTyping(content, {
+            onDelta: function (delta, accumulated) {
+              if (state.cancelled) return;
+              if (handlers.onDelta) handlers.onDelta(delta, accumulated);
+            },
+            onDone: function (full) {
+              if (state.cancelled) return;
+              state.typing = null;
+              if (handlers.onDone) handlers.onDone(full);
+            }
+          });
         } else {
           if (handlers.onError) handlers.onError("AI 返回为空，请检查模型配置");
         }
@@ -417,6 +447,13 @@ var MNIAIService = (function () {
       runOnce(provider, route, prompt, handlers);
       return { cancel: function () {} };
     },
+
+    // 打字机模拟（AI 翻译/解释与机器翻译共用）：
+    //   把完整文本按 tick 分批推送 handlers.onDelta(delta, accumulated)，
+    //   播完回调 handlers.onDone(accumulated)；返回 { cancel() }。
+    //   机器翻译（TranslateFlow.runMachineTranslate）在 streamMode 开启时复用，
+    //   与 AI 走同一 delta 事件通道，前端打字机效果与卡片高度渐进增长一致。
+    simulateTyping: simulateTyping,
 
     // 连通性测试：最小请求验证 baseURL/apiKey/model 可用。
     // probeReasoning=true 时，连通后再发一次带思考参数的请求探测模型是否支持思考，
