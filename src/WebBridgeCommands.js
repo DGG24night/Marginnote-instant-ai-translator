@@ -116,6 +116,32 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return { copied: true };
   }
 
+  // 「添加卡片」（工具栏添加按钮）：
+  // payload = { title, body, markdown, colorIndex } —— 前端按当前结果组装（查词=单词标题+音标释义正文，
+  // AI 解释=单词标题+解释正文，翻译=原句标题+译文正文），Markdown 模式默认开启。
+  // 插件侧在当前文档所属笔记本下创建一条新笔记，并通过 dc.highlightFromSelection 关联原文位置；
+  // 返回 { ok, topicid, noteId }。
+  function addCard(context, payload) {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("缺少卡片内容");
+    }
+    // 窗口定位：卡片控制器持有 addonWindow（ensureController 注入）；addon 为插件实例
+    // （notebookWillOpen 时经 setAddon 注入卡片控制器）——双兜底，避免 controller.addon 缺失
+    var win = (context.controller && context.controller.addonWindow) ||
+      (context.addon && context.addon.window);
+    if (!win) {
+      throw new Error("缺少窗口上下文，无法添加卡片");
+    }
+    var colorIndex = (typeof payload.colorIndex === "number") ? payload.colorIndex : null;
+    return MNIATCardCreator.createCard(
+      win,
+      payload.title,
+      payload.body,
+      payload.markdown !== false,
+      colorIndex
+    );
+  }
+
   function explainWithAI() {
     return MNIATFlow.explainWithAI();
   }
@@ -217,6 +243,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     setCardPinned,
     cardLostFocus,
     copyText,
+    addCard,
     explainWithAI,
     cardLookup,
     cardLookupProvider,

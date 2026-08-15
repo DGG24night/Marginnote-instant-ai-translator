@@ -15,9 +15,9 @@ var MNIATFloatingCard = (function () {
   var EDGE_PADDING = 12;
   var CARD_DRAG_TOP = 44;             // 顶部拖动条高度（覆盖 web toolbar 区域）
   // 拖动条右侧让出的宽度：需避开工具栏全部按钮。
-  // 工具栏按钮（2026-08-11 扩展）：搜索、英/美发音、AI解释、重新生成、复制、图钉 ≈ 240px，
-  // 加 12px 右边距 → 250。
-  var CARD_DRAG_BAR_RIGHT = 250;
+  // 工具栏按钮（2026-08-14 扩展）：搜索、英/美发音、添加、AI解释、重新生成、复制、图钉 ≈ 270px，
+  // 加 12px 右边距 → 285。
+  var CARD_DRAG_BAR_RIGHT = 285;
   var CARD_RESIZE_HANDLE_SIZE = 40;   // 右下角缩放手柄触摸区
   var CARD_SIZE_KEY = "mn_iat_card_size"; // NSUserDefaults：记住的卡片尺寸
 
@@ -28,6 +28,7 @@ var MNIATFloatingCard = (function () {
   var triggerButton = null;
   var pendingTrigger = null; // { win, text, rect }
   var addonMainPath = null;
+  var addonInstance = null;  // 插件实例（notebookWillOpen 时注入，卡片 bridge 命令需要访问 window）
 
   // 图钉固定状态：pinned = true 时点击卡片外部不自动关闭（工具栏图钉按钮切换）
   var pinned = false;
@@ -369,10 +370,16 @@ var MNIATFloatingCard = (function () {
       addonMainPath = mainPath;
     },
 
+    // 注入插件实例：卡片 bridge 命令（如 addCard）需要 addon.window 定位当前窗口
+    setAddon: function (addon) {
+      addonInstance = addon;
+    },
+
     ensureController: function (win) {
       if (!controller) {
         controller = cardControllerClass.new();
         controller.addonWindow = win;
+        controller.addon = addonInstance; // 与面板控制器一致：卡片 controller 也可访问插件实例
       }
       return controller;
     },

@@ -1,6 +1,8 @@
 // PromptTemplates.js —— 默认 prompt 模板与变量渲染
-// 支持占位符：{text} 选中文本、{target_lang} 目标语言
+// 支持占位符：{text} 选中文本、{target_lang} 目标语言、{context} 选区上下文（前后文）
 // 用户自定义 prompt 为空串时回退到内置默认模板。
+// {context} 由调用方（TranslateFlow）在划词时从当前页文本层提取并随任务传入，
+// 长度由常规设置「选区上下文长度」控制（0 = 不获取，变量渲染为空字符串）。
 
 var MNIATPrompts = (function () {
   var DEFAULT_TRANSLATE =
@@ -45,13 +47,18 @@ var MNIATPrompts = (function () {
     },
 
     // kind: "translate" | "explain"
-    build: function (kind, text) {
+    // context: 选区上下文（前后文）字符串；未提供或为空时 {context} 渲染为空串
+    build: function (kind, text, context) {
       var config = MNIATSettings.load();
       var custom = config.prompts && config.prompts[kind];
       var template = (custom && custom.trim().length > 0)
         ? custom
         : (kind === "explain" ? DEFAULT_EXPLAIN : DEFAULT_TRANSLATE);
-      return render(template, { text: text, target_lang: config.targetLang });
+      return render(template, {
+        text: text,
+        target_lang: config.targetLang,
+        context: context || ""
+      });
     }
   };
 })();

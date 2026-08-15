@@ -21,6 +21,7 @@ JSB.require("KingsoftDictionaryService");
 JSB.require("FloatingCardController");
 JSB.require("TranslateFlow");
 JSB.require("SelectionMonitor");
+JSB.require("CardCreator");
 JSB.require("WebBridgeCommands");
 JSB.require("WebPanelController");
 JSB.require("MNInstantAITranslatorAddon");

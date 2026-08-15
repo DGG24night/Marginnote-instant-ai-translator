@@ -974,9 +974,134 @@ html.card-fit .card-body {
 
 /* 搜索 / 重新生成 按钮：视觉上比复制、图钉略大，缩小到 15px 保持一致 */
 .search-btn .icon-svg,
-.regen-btn .icon-svg {
+.regen-btn .icon-svg,
+.add-btn .icon-svg {
   width: 15px;
   height: 15px;
+}
+
+/* ---------- 卡片颜色选择器（设置页） ---------- */
+
+.color-section {
+  margin-top: 12px;
+}
+
+.color-section-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.color-section-row > .color-section {
+  flex: 1 1 200px;
+  min-width: 200px;
+  margin-top: 0;
+}
+
+.color-section-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+/* ---------- 紧凑式颜色选择器 ---------- */
+
+.color-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.color-picker-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.color-picker-swatch {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.color-picker-num {
+  font-weight: 700;
+  min-width: 14px;
+  text-align: center;
+}
+
+.color-picker-name {
+  color: var(--text-secondary);
+}
+
+.color-picker-btn {
+  margin-left: 6px;
+}
+
+.color-picker-popup {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 4px);
+  left: 0;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 -6px 20px var(--shadow);
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 40px);
+  gap: 10px;
+}
+
+@media (max-width: 700px) {
+  .color-grid {
+    grid-template-columns: repeat(4, 36px);
+  }
+}
+
+.color-swatch {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.75);
+  transition: box-shadow 0.15s, transform 0.1s;
+}
+
+.color-swatch:hover {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.18);
+}
+
+.color-swatch.is-selected {
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+.color-swatch input[type="radio"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.color-num {
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);
 }
 
 /* 重新生成按钮：触摸点击无延迟；禁止长按选中/系统 callout（UIWebView 长按会弹系统菜单） */

@@ -31,6 +31,318 @@ var MNIATFlow = (function () {
     return /^[A-Za-z][A-Za-z'\-]*$/.test(String(text).trim());
   }
 
+  // 单词数统计：
+  //   - 英文按空白分词（连续字母数字 + 撇号 - 视为一个词）
+  //   - 中日韩（CJK）字符每个算 1 个"词"（不分词）
+  // 例："hello world" → 2；"你好世界" → 4；"hello 世界" → 3；"high-rate" → 1
+  function countWords(text) {
+    var trimmed = String(text || "").trim();
+    if (!trimmed) return 0;
+    // CJK 字符（CJK Unified Ideographs + 日文假名 + 韩文音节）：每个算 1 个词
+    var cjkChars = (trimmed.match(/[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g) || []).length;
+    // 英文/数字按空白分词，过滤纯标点
+    var asciiWords = trimmed.split(/\s+/).filter(function (w) {
+      return /[A-Za-z0-9]/.test(w);
+    }).length;
+    return cjkChars + asciiWords;
+  }
+
+  // 判定查词 / 翻译：
+  //   - 纯英文单词（isSingleWord）始终按查词；
+  //   - 其余按单词数：countWords(text) > config.translateWordCount（默认 3）按翻译，否则查词。
+  //   让用户能用查词服务查词组（多个词、短语），仅多词内容走翻译。
+  function determineMode(text) {
+    if (isSingleWord(text)) return "lookup";
+    var cfg = MNIATSettings.load();
+    var limit = (typeof cfg.translateWordCount === "number" && cfg.translateWordCount >= 0)
+      ? cfg.translateWordCount : 3;
+    return countWords(text) > limit ? "translate" : "lookup";
+  }
+
+  // ---------- 选区上下文提取（prompt {context} 变量） ----------
+  //
+  // ⚠️ 崩溃教训（2026-08-15 用户实测：划词闪退）：
+  //   JSCore 的 try/catch 只能捕获 JS 异常，**捕获不了 ObjC 层异常**。
+  //   上一版在提取链路里用了 NSJSONSerialization.dataWithJSONObjectOptions 序列化整页
+  //   文本层、以及 MNUtil.getCurrentSelection()——文本层数组含不可序列化对象（NSDate/
+  //   自定义对象/循环引用）时 ObjC 直接抛 NSInvalidArgumentException → 进程闪退。
+  //   因此本实现**只允许两类安全操作**：
+  //     1) 数组：按数字索引访问（node[i]）；
+  //     2) 字典：仅按白名单键读取（node["text"] 等），绝不 for-in 原生对象、绝不做
+  //        NSJSONSerialization / JSON.stringify 序列化。
+
+  var CONTEXT_TEXT_KEYS = ["text", "content", "str", "txt", "t", "value", "string",
+    "name", "label", "line", "lines", "char", "chars", "character", "characters",
+    "word", "words", "data", "body", "caption",
+    "glyphs", "glyph", "runs", "run", "fragments", "fragment",
+    "segments", "segment", "pieces", "piece", "items", "textContent", "contentText", "plainText",
+    "code", "codePoint"];
+  var CONTEXT_MAX_FRAGMENTS = 5000; // 一页文本的片段收集上限（PDF 文本层按词切分，需足够大）
+
+  // 递归收集文本串：
+  //   - 数组：用 buffer 聚合元素，遍历结束后 join 成一行（行/字符集合 → 完整一行文本）
+  //   - 字符串：直接收集（去空白碎片）
+  //   - 数字：作为 Unicode codePoint 转字符（PDF 文本层每字一个对象，char 键存 codePoint）
+  //   - 字典：白名单键读取，**number 类型的 char/code/codePoint 转字符**（MarginNote 实际结构）
+  // 全程仅数组索引 + 白名单键读取，无序列化、无 for-in，避免 ObjC 异常崩溃。
+  function collectPageText(node, depth, out) {
+    if (depth > 8 || out.length >= CONTEXT_MAX_FRAGMENTS) return;
+    if (node == null) return;
+    var t = typeof node;
+    if (t === "string") {
+      var s = node.trim();
+      if (s.length >= 1 && !/^[\d.,\-+\s]+$/.test(s)) out.push(s);
+      return;
+    }
+    if (t === "number") {
+      // 裸数字（极少见）：作为单字符
+      if (node >= 0x20 && node <= 0x10FFFF) out.push(String.fromCharCode(node));
+      return;
+    }
+    if (t !== "object") return;
+
+    // 数组（NSArray / 字符集合）：buffer 聚合 → 一行
+    if (typeof node.length === "number") {
+      var n = Math.min(node.length, 2000);
+      var buf = [];
+      for (var i = 0; i < n && out.length < CONTEXT_MAX_FRAGMENTS; i++) {
+        var elem = node[i];
+        if (elem == null) continue;
+        var et = typeof elem;
+        if (et === "string") {
+          if (elem.length > 0) buf.push(elem);
+        } else if (et === "number") {
+          if (elem >= 0x20 && elem <= 0x10FFFF) buf.push(String.fromCharCode(elem));
+        } else if (et === "object" && typeof elem.length !== "number") {
+          // 字符对象：优先取 char/character/code/codePoint（number → 字符）
+          var ch = elem.char;
+          if (typeof ch !== "number") ch = elem.character;
+          if (typeof ch !== "number") ch = elem.code;
+          if (typeof ch !== "number") ch = elem.codePoint;
+          if (typeof ch === "number" && ch >= 0x20 && ch <= 0x10FFFF) {
+            buf.push(String.fromCharCode(ch));
+            continue;
+          }
+          // 其他文本字段（text/content/str/value/...）
+          var textFound = "";
+          for (var ki = 0; ki < CONTEXT_TEXT_KEYS.length; ki++) {
+            var k = CONTEXT_TEXT_KEYS[ki];
+            if (k === "char" || k === "character" || k === "code" || k === "codePoint") continue;
+            var v = elem[k];
+            if (typeof v === "string" && v.length > 0) { textFound = v; break; }
+          }
+          if (textFound) {
+            buf.push(textFound);
+          } else {
+            // 字典无文本字段：递归收集其中可能的字符串
+            collectPageText(elem, depth + 1, out);
+          }
+        } else {
+          // 嵌套数组/其他：递归
+          collectPageText(elem, depth + 1, out);
+        }
+      }
+      var line = buf.join("").trim();
+      if (line.length >= 1) out.push(line);
+      return;
+    }
+
+    // 字典（无 length）：白名单键读取
+    for (var ki2 = 0; ki2 < CONTEXT_TEXT_KEYS.length; ki2++) {
+      var k2 = CONTEXT_TEXT_KEYS[ki2];
+      var v2 = node[k2];
+      if (v2 == null) continue;
+      var vt2 = typeof v2;
+      if (vt2 === "string") {
+        var sv2 = v2.trim();
+        if (sv2.length >= 1 && !/^[\d.,\-+\s]+$/.test(sv2)) out.push(sv2);
+      } else if (vt2 === "number" &&
+        (k2 === "char" || k2 === "character" || k2 === "code" || k2 === "codePoint")) {
+        // 字典中独立的 char 数字：作为单字符
+        if (v2 >= 0x20 && v2 <= 0x10FFFF) out.push(String.fromCharCode(v2));
+      } else if (vt2 === "object") {
+        collectPageText(v2, depth + 1, out);
+      }
+    }
+  }
+
+  // 安全描述 NSArray 结构（不序列化、不 for-in，仅索引访问 + 白名单键读取）
+  // 返回 { length, firstType, firstHasKey:["text:1","content:0",...], firstArrayLen }
+  // ——用于 HUD 诊断告诉用户实际键名是什么（白名单是否覆盖）
+  function describeArray(arr) {
+    var info = { length: (arr && typeof arr.length === "number") ? arr.length : 0 };
+    if (!arr || info.length === 0) return info;
+    var first = arr[0];
+    info.firstType = typeof first;
+    if (first && typeof first === "object") {
+      if (typeof first.length === "number") {
+        // 第一层是数组（行集合）——再看首个元素
+        info.firstArrayLen = first.length;
+        if (first.length > 0) {
+          var row0 = first[0];
+          info.firstChildType = typeof row0;
+          if (row0 && typeof row0 === "object" && typeof row0.length !== "number") {
+            // 字典：列出白名单键探测命中情况
+            info.firstKeys = probeKeys(row0);
+          } else if (typeof row0 === "string") {
+            info.firstChildIsString = true;
+          }
+        }
+      } else {
+        // 第一层直接是字典
+        info.firstKeys = probeKeys(first);
+      }
+    }
+    return info;
+  }
+
+  function probeKeys(obj) {
+    var found = [];
+    for (var i = 0; i < CONTEXT_TEXT_KEYS.length; i++) {
+      var k = CONTEXT_TEXT_KEYS[i];
+      var v = obj[k];
+      if (v == null) continue;
+      var t = typeof v;
+      var preview = "";
+      if (t === "string") preview = ":" + String(v).slice(0, 12).replace(/\s+/g, "_");
+      found.push(k + "(" + t + ")" + preview);
+    }
+    return found;
+  }
+
+  // 获取指定页的整页文本：
+  //   1) MNDocument（若运行环境注入）：textContentsForPageNo 返回 string（首选）；
+  //   2) MbBook.textContentsForPageNo：返回 NSArray（外层行/段、内层对象）——白名单键递归收集。
+  // 全程仅数组索引 + 白名单键读取，无序列化、无 for-in，避免 ObjC 异常崩溃。
+  // 返回 { ok, text, source, reason?, info? } ——失败时 reason + info 给 HUD 诊断
+  function getPageText(dc, pageNo) {
+    // 1) MNDocument（若运行环境注入）
+    try {
+      if (typeof MNDocument !== "undefined" && MNDocument) {
+        var md = new MNDocument(dc.document);
+        if (md && typeof md.textContentsForPageNo === "function") {
+          var t = md.textContentsForPageNo(pageNo);
+          if (typeof t === "string" && t.trim().length > 0) {
+            return { ok: true, text: t, source: "MNDocument" };
+          }
+        }
+      }
+    } catch (e) { /* 环境未注入/异常 → 走兜底 */ }
+    // 2) MbBook.textContentsForPageNo：NSArray → 白名单键递归收集
+    try {
+      var doc = dc.document;
+      if (!doc || typeof doc.textContentsForPageNo !== "function") {
+        return { ok: false, reason: "MbBook.textContentsForPageNo 方法不可用" };
+      }
+      var arr = doc.textContentsForPageNo(pageNo);
+      if (!arr) {
+        return { ok: false, reason: "MbBook 文本层返回 null/undefined（pageNo=" + pageNo + "）" };
+      }
+      if (typeof arr.length !== "number") {
+        return { ok: false, reason: "MbBook 文本层无 length 属性（typeof=" + typeof arr + "）" };
+      }
+      if (arr.length === 0) {
+        return { ok: false, reason: "MbBook 文本层为空数组（该页可能为扫描件/未 OCR）" };
+      }
+      var parts = [];
+      collectPageText(arr, 0, parts);
+      if (parts.length > 0) {
+        return { ok: true, text: parts.join(" "), source: "MbBook" };
+      }
+      // 收集为空：诊断（让用户知道白名单键不匹配实际键名）
+      var info = describeArray(arr);
+      return {
+        ok: false,
+        reason: "白名单键未匹配（第一行探测键名见 info）",
+        info: info
+      };
+    } catch (e) {
+      return { ok: false, reason: "MbBook.textContentsForPageNo 抛 JS 异常: " + e };
+    }
+  }
+
+  // 选区所在页码：DocumentController.currPageNo（1 起）/ currPageIndex（0 起）。
+  // 只用文档控制器属性（官方文档确认存在），不调用 MNUtil（环境注入与否未知，
+  // 且可能触发 ObjC 异常导致崩溃）。
+  function resolveSelectionPageNo(dc) {
+    if (dc) {
+      if (typeof dc.currPageNo === "number" && dc.currPageNo >= 1) return dc.currPageNo;
+      if (typeof dc.currPageIndex === "number") return dc.currPageIndex + 1;
+    }
+    return 1;
+  }
+
+  // 提取选区上下文：当前页文本层中定位选中文本，前后各取 contextLength 字符。
+  // 返回 "" 表示未开启/定位失败（prompt 的 {context} 渲染为空，不影响请求）。
+  // 开启但提取失败时弹一次性 HUD 诊断（console 日志在 MarginNote 不可见），便于排查。
+  function extractContext(win, text) {
+    try {
+      var cfg = MNIATSettings.load();
+      var len = (typeof cfg.contextLength === "number") ? cfg.contextLength : 200;
+      if (!len || len <= 0) return "";
+      var studyController = Application.sharedInstance().studyController(win);
+      if (!studyController || !studyController.readerController) return "";
+      var dc = studyController.readerController.currentDocumentController;
+      if (!dc || !dc.document) return "";
+      var pageNo = resolveSelectionPageNo(dc);
+      var pageResult = getPageText(dc, pageNo);
+      var pageText = pageResult.ok ? pageResult.text : "";
+      var needle = String(text || "").trim();
+      if (!pageText || pageText.length === 0) {
+        var reason = pageResult.reason || "未知";
+        console.log("[MNIATFlow] context: page text unavailable, reason=" + reason);
+        // 诊断信息：HUD 显示失败原因 + 探测到的实际键名（便于白名单覆盖）
+        var hudMsg = "[翻译插件] 上下文失败：" + reason + "，已降级为不注入";
+        if (pageResult.info && pageResult.info.firstKeys) {
+          hudMsg += "；实际键名：" + pageResult.info.firstKeys.slice(0, 5).join("、");
+        }
+        if (hudMsg.length > 220) hudMsg = hudMsg.slice(0, 220) + "…";
+        Application.sharedInstance().showHUD(hudMsg, win, 4);
+        return "";
+      }
+      if (!needle) return "";
+      var pos = pageText.indexOf(needle);
+      if (pos < 0) {
+        // 选区在文本层中可能带换行/连字符：模糊兜底——去掉空白后重试
+        var flat = pageText.replace(/\s+/g, " ");
+        var flatNeedle = needle.replace(/\s+/g, " ");
+        pos = flat.indexOf(flatNeedle);
+        if (pos < 0) {
+          console.log("[MNIATFlow] context: selection not found in page text (pageNo=" + pageNo +
+            ", pageLen=" + pageText.length + ", needle=" + needle.slice(0, 40) + ")");
+          var preview = needle.length > 20 ? needle.slice(0, 20) + "…" : needle;
+          Application.sharedInstance().showHUD("[翻译插件] 上下文：未定位到选区「" + preview +
+            "」（页文本长度 " + pageText.length + "），已降级为不注入", win, 3);
+          return "";
+        }
+        var start = Math.max(0, pos - len);
+        var end = Math.min(flat.length, pos + flatNeedle.length + len);
+        var ctxFlat = flat.slice(start, end).trim();
+        console.log("[MNIATFlow] context extracted (flat): len=" + ctxFlat.length +
+          ", head=" + ctxFlat.slice(0, 60));
+        return ctxFlat;
+      }
+      var start = Math.max(0, pos - len);
+      var end = Math.min(pageText.length, pos + needle.length + len);
+      var ctx = pageText.slice(start, end).trim();
+      console.log("[MNIATFlow] context extracted: len=" + ctx.length + ", head=" + ctx.slice(0, 60));
+      return ctx;
+    } catch (e) {
+      console.log("[MNIATFlow] extract context error: " + e);
+      return "";
+    }
+  }
+
+  // 上下文摘要（用于缓存键区分：同一文本不同上下文视为不同输入）
+  function contextKey(context) {
+    if (!context) return "";
+    var h = 5381;
+    for (var i = 0; i < context.length; i++) {
+      h = ((h << 5) + h + context.charCodeAt(i)) >>> 0;
+    }
+    return "c" + h.toString(36);
+  }
+
   // 解析有效路由（含「重新生成选模型」的临时覆盖）：
   // override = { providerId, modelId }，覆盖的提供商/模型不存在时回落默认路由；
   // 覆盖仅作用于本次请求，不写回 config.routing。
@@ -74,12 +386,17 @@ var MNIATFlow = (function () {
     var cacheKind = null;
     var cacheKey = "";
     if (provider && route.modelId) {
+      // 缓存键纳入上下文摘要：prompt 含 {context} 时，同一文本不同上下文结果不同，
+      // 不区分会导致缓存互串（cXXX 段；上下文为空时不加段，兼容旧缓存仍可命中）
+      var ck = contextKey(job.context);
       if (promptKind === "explain") {
         cacheKind = "lookup";
-        cacheKey = "ai:" + provider.id + ":" + route.modelId + ":" + String(job.text).trim().toLowerCase();
+        cacheKey = "ai:" + provider.id + ":" + route.modelId + (ck ? ":" + ck : "") +
+          ":" + String(job.text).trim().toLowerCase();
       } else {
         cacheKind = "translate";
-        cacheKey = provider.id + ":" + route.modelId + ":" + String(job.text).trim();
+        cacheKey = provider.id + ":" + route.modelId + (ck ? ":" + ck : "") +
+          ":" + String(job.text).trim();
       }
       if (!opts.bypassCache) {
         var cached = MNIATCache.get(cacheKind, cacheKey);
@@ -95,6 +412,7 @@ var MNIATFlow = (function () {
 
     job.session = MNIAIService.run(routingKind, promptKind, job.text, {
       resolved: resolved, // 复用已解析的路由（含临时覆盖），避免内部二次解析导致键不一致
+      context: job.context || "", // 选区上下文 → prompt {context} 变量
       onDelta: function (delta, accumulated) {
         // 流式增量：前端 accumulated 累积渲染（打字机效果）
         pushEvent({ type: "delta", accumulated: accumulated });
@@ -120,6 +438,23 @@ var MNIATFlow = (function () {
         }
       },
       onError: function (message) {
+        // 卡片选中态回退（2026-08-15）：primary（标题）失败时尝试用 fallbackText
+        // （摘录正文）再发起一次请求，避免 from/to 相同等错误导致完全无响应。
+        // 仅一次重试（_fallbackTried 标志）防止无限循环。
+        if (job.fallbackText && job.fallbackText !== job.text && !job._fallbackTried) {
+          job._fallbackTried = true;
+          console.log("[MNIATFlow] primary failed, retry with fallback text: \"" +
+            job.fallbackText.slice(0, 40) + "\"");
+          if (job.session) {
+            try { job.session.cancel(); } catch (e) { /* 忽略 */ }
+            job.session = null;
+          }
+          job.text = job.fallbackText;
+          job.fallbackText = ""; // 防止再触发
+          // 重新发起 AI 请求（按新文本重新判定查词/翻译与缓存键）
+          runAI(job, routingKind, promptKind, opts);
+          return;
+        }
         pushEvent({ type: "error", message: message });
       }
     });
@@ -485,12 +820,12 @@ var MNIATFlow = (function () {
 
     if (item.type === "translate") {
       var src = String(item.sourceText || "").trim();
-      currentJob = { mode: "translate", text: src, win: win, session: null };
+      currentJob = { mode: "translate", text: src, win: win, session: null, context: "" };
       pushEvent({ type: "loading", mode: "translate", text: src });
       pushEvent({ type: "translateResult", text: String(item.text || "") });
     } else if (item.type === "ai") {
       var w = String(item.sourceText || "").trim();
-      currentJob = { mode: "explain", text: w, win: win, session: null };
+      currentJob = { mode: "explain", text: w, win: win, session: null, context: "" };
       pushEvent({ type: "loading", mode: "explain", text: w });
       pushEvent({ type: "translateResult", text: String(item.text || "") });
       speakAIExplainWord(currentJob, "explain");
@@ -499,7 +834,7 @@ var MNIATFlow = (function () {
       var provider = item.provider === "bing" || item.provider === "haici" || item.provider === "kingsoft"
         ? item.provider
         : "youdao";
-      currentJob = { mode: "lookup", text: word, win: win, session: null };
+      currentJob = { mode: "lookup", text: word, win: win, session: null, context: "" };
       pushEvent({ type: "loading", mode: "lookup", text: word });
       finishLookup(currentJob, provider, item.data);
     } else {
@@ -511,7 +846,7 @@ var MNIATFlow = (function () {
   return {
     // 判定该文本是否应被处理（查词/翻译独立开关）
     canHandle: function (text) {
-      var mode = isSingleWord(text) ? "lookup" : "translate";
+      var mode = determineMode(text);
       var config = MNIATSettings.load();
       if (mode === "lookup" && config.lookupEnabled === false) return false;
       if (mode === "translate" && config.translateEnabled === false) return false;
@@ -519,19 +854,34 @@ var MNIATFlow = (function () {
     },
 
     // 划词触发入口（triggerMode=auto 时由 monitor 直接调用；button 模式由悬浮按钮点击调用）
-    handleSelection: function (win, text, anchorRect) {
+    // fallback（2026-08-15）：来自卡片选中态的回退文本（标题优先，摘录正文兜底）。
+    // 当 primary 报错时由 runAI 自动用 fallback 再发起一次请求。
+    handleSelection: function (win, text, anchorRect, fallback) {
       this.cancelCurrent();
 
-      var mode = isSingleWord(text) ? "lookup" : "translate";
+      var mode = determineMode(text);
       var config = MNIATSettings.load();
       // 独立开关：查词/翻译分别控制；单独开启查词时选中句子/段落不触发翻译
       if (mode === "lookup" && config.lookupEnabled === false) return;
       if (mode === "translate" && config.translateEnabled === false) return;
 
       lastWin = win;
-      currentJob = { mode: mode, text: text, win: win, session: null };
+      // 选区上下文（prompt {context} 变量）：
+      //   - 文档划词（fallback 为 undefined/null）：从当前页文本层提取前后文；
+      //   - 卡片选中态（fallback 为字符串）：标题/摘录不一定来自当前页文本层，提取无意义，
+      //     且无文档时（脑图模式）会误弹「未定位到选区」HUD → 直接跳过（context 为空串）。
+      var fromCard = typeof fallback === "string";
+      currentJob = {
+        mode: mode,
+        text: text,
+        win: win,
+        session: null,
+        context: fromCard ? "" : extractContext(win, text),
+        fallbackText: fromCard ? (fallback || "") : "" // 卡片选中态：primary（标题）失败时回退到摘录正文
+      };
 
-      console.log("[MNIATFlow] new job: mode=" + mode + ", text=\"" + text.slice(0, 40) + "\"");
+      console.log("[MNIATFlow] new job: mode=" + mode + ", text=\"" + text.slice(0, 40) +
+        "\", fromCard=" + fromCard + ", fallback=" + (fallback ? "yes" : "no"));
       // 显示卡片并加载 #/card 页面；卡片前端 ready 后通过 bridge 发送 cardReady
       MNIATFloatingCard.showJob(win, anchorRect);
     },
@@ -600,7 +950,8 @@ var MNIATFlow = (function () {
       if (!trimmed) throw new Error("查询内容为空");
       var win = (currentJob && currentJob.win) || lastWin;
       this.cancelCurrent();
-      currentJob = { mode: "lookup", text: trimmed, win: win, session: null, bypassCache: true };
+      // 搜索无选区：不带上下文（context 为空，{context} 渲染为空串）
+      currentJob = { mode: "lookup", text: trimmed, win: win, session: null, bypassCache: true, context: "" };
       pushEvent({ type: "reset" });
       this.startJob(currentJob);
       return { started: true };

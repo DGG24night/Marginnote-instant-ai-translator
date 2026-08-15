@@ -420,9 +420,10 @@ var MNIAIService = (function () {
   return {
     // kind: "translate" | "lookup"（决定使用哪组路由配置）
     // promptKind: "translate" | "explain"（决定使用哪个 prompt 模板）
-    // handlers: { onDelta(delta, accumulated), onDone(full), onError(message), resolved?, override? }
+    // handlers: { onDelta(delta, accumulated), onDone(full), onError(message), resolved?, override?, context? }
     //   resolved: { provider, route } —— 调用方已解析好的有效路由（含「重新生成选模型」的临时覆盖），
     //             不传则内部按配置解析。
+    //   context: 选区上下文（前后文），渲染进 prompt 的 {context} 变量（可选）
     // 返回 { cancel() }
     run: function (kind, promptKind, text, handlers) {
       handlers = handlers || {};
@@ -437,7 +438,7 @@ var MNIAIService = (function () {
         return { cancel: function () {} };
       }
 
-      var prompt = MNIATPrompts.build(promptKind, text);
+      var prompt = MNIATPrompts.build(promptKind, text, handlers.context);
       var config = MNIATSettings.load();
       var useStream = config.streamMode !== false;
 

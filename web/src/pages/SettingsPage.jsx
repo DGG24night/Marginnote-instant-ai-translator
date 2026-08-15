@@ -32,6 +32,29 @@ const MT_DOMAINS = [
   { value: "contract", label: "合同" },
 ];
 
+// 创建卡片颜色（用户提供的 MarginNote 调色板截图，序号 1-16）
+//   idx 为存储索引（0-15，写入 MbBookNote.colorIndex）；
+//   用户视角为 1-16，对应 figure 中的色块（标签 = 序号 + 1）。
+//   textColor 为色块内文字颜色（深色背景用白字，保证序号可读）。
+const CARD_COLORS = [
+  { idx: 0,  color: "#FFFACC", name: "浅黄", textColor: "#000" },
+  { idx: 1,  color: "#D4F8CC", name: "浅绿", textColor: "#000" },
+  { idx: 2,  color: "#D4E6F8", name: "浅蓝", textColor: "#000" },
+  { idx: 3,  color: "#F8D4DC", name: "浅粉", textColor: "#000" },
+  { idx: 4,  color: "#FFFF66", name: "黄",   textColor: "#000" },
+  { idx: 5,  color: "#66E066", name: "绿",   textColor: "#000" },
+  { idx: 6,  color: "#66B2FF", name: "蓝",   textColor: "#000" },
+  { idx: 7,  color: "#F84C4C", name: "红",   textColor: "#000" },
+  { idx: 8,  color: "#FF9933", name: "橙",   textColor: "#000" },
+  { idx: 9,  color: "#1F8A3F", name: "深绿", textColor: "#fff" },
+  { idx: 10, color: "#2A4D9E", name: "深蓝", textColor: "#fff" },
+  { idx: 11, color: "#C8302A", name: "深红", textColor: "#fff" },
+  { idx: 12, color: "#E0E0E0", name: "浅灰", textColor: "#000" },
+  { idx: 13, color: "#B0B0B0", name: "灰",   textColor: "#000" },
+  { idx: 14, color: "#707070", name: "深灰", textColor: "#fff" },
+  { idx: 15, color: "#C39EE6", name: "紫",   textColor: "#000" },
+];
+
 // 阿里云机器翻译专业版场景（Translate 接口 Scene 参数）
 const MT_SCENES = [
   { value: "title", label: "商品标题" },
@@ -56,6 +79,63 @@ function Section({ title, children }) {
       <h2 className="section-title">{title}</h2>
       {children}
     </section>
+  );
+}
+
+// 紧凑式颜色选择器：默认显示一个当前色块 + 序号 + 「选择」按钮；
+// 点击按钮弹出 4×4 色块网格，点选后写回并关闭弹窗（点击弹窗外关闭）。
+function ColorPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  // 弹窗外点击关闭
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocMouseDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const current = CARD_COLORS[safeValue] || CARD_COLORS[0];
+  return (
+    <div className="color-picker" ref={wrapRef}>
+      <div className="color-picker-current">
+        <span
+          className="color-picker-swatch"
+          style={{ background: current.color }}
+          title={`当前：${safeValue + 1}（${current.name}）`}
+        />
+        <button
+          type="button"
+          className="btn btn-sm color-picker-btn"
+          onClick={() => setOpen((v) => !v)}
+        >
+          选择
+        </button>
+      </div>
+      {open && (
+        <div className="color-picker-popup">
+          <div className="color-grid">
+            {CARD_COLORS.map((opt) => (
+              <button
+                key={opt.idx}
+                type="button"
+                className={"color-swatch" + (safeValue === opt.idx ? " is-selected" : "")}
+                style={{ background: opt.color, color: opt.textColor }}
+                title={`${opt.idx + 1}（${opt.name}）`}
+                onClick={() => {
+                  onChange(opt.idx);
+                  setOpen(false);
+                }}
+              >
+                <span className="color-num">{opt.idx + 1}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -845,7 +925,8 @@ function PromptEditor({ promptKey, title }) {
       />
       <p className="field-hint">
         留空则使用默认模板。可用变量：<code>{"{text}"}</code> 选中文本、
-        <code>{"{target_lang}"}</code> 目标语言。
+        <code>{"{target_lang}"}</code> 目标语言、
+        <code>{"{context}"}</code> 选区上下文（前后文，长度在「常规」设置中配置，0 时不注入）。
       </p>
     </div>
   );
@@ -1086,21 +1167,9 @@ function SettingsPage() {
       <div className="settings-content">
         {activeTab === "general" && (
           <Section title="常规">
+            {/* ===== 通用（置顶） ===== */}
+            <h3 className="subsection-title">通用</h3>
             <div className="route-grid">
-              <Field
-                label="翻译服务"
-                hint="翻译句子/段落时使用的引擎：AI 翻译走「模型路由」中配置的大模型；机器翻译走百度等开放平台（无需 AI Key），接口类型与领域在「模型路由」页配置。"
-              >
-                <select
-                  className="input"
-                  value={config.translateService === "machine" ? "machine" : "ai"}
-                  onChange={(e) => update((c) => { c.translateService = e.target.value; })}
-                >
-                  <option value="ai">AI 翻译</option>
-                  <option value="machine">机器翻译</option>
-                </select>
-              </Field>
-
               <Field label="触发方式">
                 <select
                   className="input"
@@ -1112,52 +1181,44 @@ function SettingsPage() {
                 </select>
               </Field>
 
-              <Field label="目标语言">
-                <select
+              <Field
+                label="选区上下文长度"
+                hint="划词翻译/解释时，从当前页文本层取选区前后的文字作为上下文，渲染进 prompt 的 {context} 变量，帮助 AI 理解语境（如指代、专业术语）。填写选区前后各取多少字符；设为 0 表示不获取上下文。"
+              >
+                <input
                   className="input"
-                  value={config.targetLang}
-                  onChange={(e) => update((c) => { c.targetLang = e.target.value; })}
-                >
-                  {TARGET_LANGS.map((l) => (
-                    <option key={l.value} value={l.value}>{l.label}</option>
-                  ))}
-                </select>
+                  type="number"
+                  min="0"
+                  max="2000"
+                  step="10"
+                  value={config.contextLength}
+                  onChange={(e) =>
+                    update((c) => {
+                      const v = parseInt(e.target.value, 10);
+                      c.contextLength = isNaN(v) || v < 0 ? 0 : v;
+                    })
+                  }
+                />
               </Field>
 
               <Field
-                label="查词服务提供商"
-                hint="划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。"
+                label="触发翻译的单词数"
+                hint="选区单词数大于此值时按翻译处理，否则按查词处理（便于用查词服务查词组）。英文按空格分词，中文按字符算（汉字本身就是词）。默认 3；纯英文单词始终按查词。"
               >
-                <select
+                <input
                   className="input"
-                  value={config.lookupProvider || "youdao"}
-                  onChange={(e) => update((c) => { c.lookupProvider = e.target.value; })}
-                >
-                  <option value="youdao">有道词典</option>
-                  <option value="bing">必应词典</option>
-                  <option value="haici">海词词典</option>
-                  <option value="kingsoft">金山词霸</option>
-                  <option value="ai">AI 解释</option>
-                </select>
-              </Field>
-
-              <Field
-                label="AI 解释发音"
-                hint={config.lookupProvider === "ai"
-                  ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
-                  : "需将「查词服务提供商」选为「AI 解释」后生效。"}
-              >
-                <select
-                  className="input"
-                  value={config.aiExplainPronounce || "youdao"}
-                  disabled={config.lookupProvider !== "ai"}
-                  onChange={(e) => update((c) => { c.aiExplainPronounce = e.target.value; })}
-                >
-                  <option value="youdao">有道词典</option>
-                  <option value="haici">海词词典</option>
-                  <option value="bing">必应词典</option>
-                  <option value="kingsoft">金山词霸</option>
-                </select>
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={config.translateWordCount}
+                  onChange={(e) =>
+                    update((c) => {
+                      const v = parseInt(e.target.value, 10);
+                      c.translateWordCount = isNaN(v) || v < 0 ? 0 : v;
+                    })
+                  }
+                />
               </Field>
 
               <Field label="主题">
@@ -1182,6 +1243,45 @@ function SettingsPage() {
                   <option value="large">大</option>
                 </select>
               </Field>
+            </div>
+            <div className="checkbox-grid">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.streamMode !== false}
+                  onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
+                />
+                打字机效果
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={!!config.rememberCardSize}
+                  onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
+                />
+                记住卡片大小
+              </label>
+            </div>
+
+            {/* ===== 查词 ===== */}
+            <h3 className="subsection-title">查词</h3>
+            <div className="route-grid">
+              <Field
+                label="查词服务提供商"
+                hint="划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。"
+              >
+                <select
+                  className="input"
+                  value={config.lookupProvider || "youdao"}
+                  onChange={(e) => update((c) => { c.lookupProvider = e.target.value; })}
+                >
+                  <option value="youdao">有道词典</option>
+                  <option value="bing">必应词典</option>
+                  <option value="haici">海词词典</option>
+                  <option value="kingsoft">金山词霸</option>
+                  <option value="ai">AI 解释</option>
+                </select>
+              </Field>
 
               <Field label="发音口音">
                 <select
@@ -1191,6 +1291,25 @@ function SettingsPage() {
                 >
                   <option value="us">美式</option>
                   <option value="uk">英式</option>
+                </select>
+              </Field>
+
+              <Field
+                label="AI 解释发音"
+                hint={config.lookupProvider === "ai"
+                  ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
+                  : "需将「查词服务提供商」选为「AI 解释」后生效。"}
+              >
+                <select
+                  className="input"
+                  value={config.aiExplainPronounce || "youdao"}
+                  disabled={config.lookupProvider !== "ai"}
+                  onChange={(e) => update((c) => { c.aiExplainPronounce = e.target.value; })}
+                >
+                  <option value="youdao">有道词典</option>
+                  <option value="haici">海词词典</option>
+                  <option value="bing">必应词典</option>
+                  <option value="kingsoft">金山词霸</option>
                 </select>
               </Field>
 
@@ -1211,6 +1330,46 @@ function SettingsPage() {
                     })
                   }
                 />
+              </Field>
+            </div>
+            <div className="checkbox-grid">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.pronounceAuto}
+                  onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
+                />
+                查词后自动发音
+              </label>
+            </div>
+
+            {/* ===== 翻译 ===== */}
+            <h3 className="subsection-title">翻译</h3>
+            <div className="route-grid">
+              <Field
+                label="翻译服务"
+                hint="翻译句子/段落时使用的引擎：AI 翻译走「模型路由」中配置的大模型；机器翻译走百度等开放平台（无需 AI Key），接口类型与领域在「模型路由」页配置。"
+              >
+                <select
+                  className="input"
+                  value={config.translateService === "machine" ? "machine" : "ai"}
+                  onChange={(e) => update((c) => { c.translateService = e.target.value; })}
+                >
+                  <option value="ai">AI 翻译</option>
+                  <option value="machine">机器翻译</option>
+                </select>
+              </Field>
+
+              <Field label="目标语言">
+                <select
+                  className="input"
+                  value={config.targetLang}
+                  onChange={(e) => update((c) => { c.targetLang = e.target.value; })}
+                >
+                  {TARGET_LANGS.map((l) => (
+                    <option key={l.value} value={l.value}>{l.label}</option>
+                  ))}
+                </select>
               </Field>
 
               <Field
@@ -1233,32 +1392,26 @@ function SettingsPage() {
               </Field>
             </div>
 
-            <h3 className="subsection-title">偏好</h3>
-            <div className="checkbox-grid">
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={config.pronounceAuto}
-                  onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
+            {/* ===== 卡片颜色（独立分类） ===== */}
+            <h3 className="subsection-title">
+              卡片颜色
+              <Hint>设置「添加」按钮创建卡片时使用的颜色</Hint>
+            </h3>
+            <div className="color-section-row">
+              <div className="color-section">
+                <span className="color-section-label">翻译卡片颜色</span>
+                <ColorPicker
+                  value={config.cardColorTranslate}
+                  onChange={(v) => update((c) => { c.cardColorTranslate = v; })}
                 />
-                查词自动发音
-              </label>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={config.streamMode !== false}
-                  onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
+              </div>
+              <div className="color-section">
+                <span className="color-section-label">查词 / AI 解释卡片颜色</span>
+                <ColorPicker
+                  value={config.cardColorLookup}
+                  onChange={(v) => update((c) => { c.cardColorLookup = v; })}
                 />
-                打字机效果
-              </label>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={!!config.rememberCardSize}
-                  onChange={(e) => update((c) => { c.rememberCardSize = e.target.checked; })}
-                />
-                记住卡片大小
-              </label>
+              </div>
             </div>
 
             <div className="config-sync-buttons">

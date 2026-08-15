@@ -59,6 +59,12 @@ const CLOSE_PATHS = [
   "M702.371457 743.450636a40.078201 40.078201 0 0 1-28.054741-12.02346L292.571847 349.682307a40.383798 40.383798 0 0 1 57.111437-57.111437l380.742914 382.746824a40.078201 40.078201 0 0 1-28.054741 68.132942z",
 ];
 
+// 添加卡片（用户提供的 foller.svg：圆角矩形边框 + 中心加号，2 path，单色 currentColor）
+const ADD_PATHS = [
+  "M831.6 639.6h-63.9v127.9H639.9v63.9h127.8v127.9h63.9V831.4h127.9v-63.9H831.6z",
+  "M564.3 925.2c0-18.5-15-33.6-33.6-33.6H287.3c-86.2 0-156.4-70.2-156.4-156.4V286.9c0-86.2 70.1-156.4 156.4-156.4h448.4c86.2 0 156.4 70.2 156.4 156.4v238.8c0 18.5 15 33.6 33.6 33.6s33.6-15 33.6-33.6V286.9C959.2 163.6 859 63.3 735.7 63.3H287.3C164 63.3 63.7 163.6 63.7 286.8v448.3c0 123.2 100.3 223.5 223.6 223.5h243.4c18.6 0.1 33.6-14.9 33.6-33.4z",
+];
+
 function SpeakerIcon() {
   return (
     <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
@@ -123,6 +129,16 @@ function CloseIcon() {
   return (
     <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
       {CLOSE_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
+function AddIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {ADD_PATHS.map((d, i) => (
         <path key={i} d={d} fill="currentColor" />
       ))}
     </svg>
@@ -679,30 +695,82 @@ function CardPage() {
     return () => clearTimeout(timer);
   }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems, isStreaming]);
 
+  // 词典结果 → Markdown 正文（音标/释义分组），「添加卡片」与「复制」共用
+  //   includeWord: true 表示首行包含单词（用于复制到剪贴板场景）；
+  //                false 表示不包含（用于「添加卡片」，标题已是单词）
+  //   排版：音标分组（**音标** + 英/美各一行）、释义分组（**释义** + 每个词性一行），
+  //   配合 excerptTextMarkdown=1 由 markdown.js 渲染为粗体小节标题。
+  const buildDictBody = useCallback((d, includeWord) => {
+    const lines = [];
+    if (includeWord && d.word) {
+      lines.push(d.word);
+    }
+    if (d.ukphone || d.usphone) {
+      lines.push("**音标**");
+      if (d.ukphone) lines.push(`英 /${d.ukphone}/`);
+      if (d.usphone) lines.push(`美 /${d.usphone}/`);
+    }
+    // 同一词性的释义合并成一行（用「；」分隔），不同词性分多行 —— 与有道展示一致
+    const groups = [];
+    (d.translations || []).forEach((t) => {
+      const pos = t.pos || "";
+      if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
+        groups[groups.length - 1].meanings.push(t.meaning);
+      } else {
+        groups.push({ pos, meanings: [t.meaning] });
+      }
+    });
+    if (groups.length > 0) {
+      lines.push("**释义**");
+      groups.forEach((g) => {
+        lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);
+      });
+    }
+    return lines.join("\n");
+  }, []);
+
+  // 「添加卡片」：把当前结果保存为一条新笔记（Markdown 模式默认开启）。
+  // 查词 → 单词为标题、查词结果（音标+释义）为正文；AI 解释 → 单词为标题、解释为正文；
+  // 翻译 → 原句为标题、译文为正文。经 bridge 交给插件层在当前文档所属笔记本下创建。
+  // 插件侧会调 dc.highlightFromSelection() 让原文自动高亮，并让新节点可点击跳转原文。
+  // 颜色按当前任务类型取对应配置（查词/AI 解释 → cardColorLookup，翻译 → cardColorTranslate）。
+  const addCard = useCallback(async () => {
+    let title = "";
+    let body = "";
+    let kind = ""; // "translate" | "lookup"
+    if (state.status === "dict" && state.dict) {
+      title = state.dict.word;
+      // 卡片标题已是单词，正文不再重复（includeWord=false）；分组排版见 buildDictBody
+      body = buildDictBody(state.dict, false);
+      kind = "lookup";
+    } else if (state.status === "done" && (state.mode === "explain" || state.mode === "translate")) {
+      title = state.sourceText;
+      body = state.accumulated;
+      kind = state.mode; // "translate" | "explain"（两者都用 cardColorLookup）
+    }
+    if (!title.trim() && !body.trim()) {
+      showHint("暂无内容可添加为卡片");
+      return;
+    }
+    const colorIndex = kind === "translate"
+      ? (Number.isFinite(config.cardColorTranslate) ? config.cardColorTranslate : 0)
+      : (Number.isFinite(config.cardColorLookup) ? config.cardColorLookup : 0);
+    try {
+      await MNBridge.send("addCard", { title, body, markdown: true, colorIndex });
+      showHint("已添加卡片到当前笔记本（原文已高亮）");
+    } catch (error) {
+      showHint(`添加卡片失败：${(error && error.message) || "请重试"}`);
+    }
+  }, [state.status, state.dict, state.mode, state.sourceText, state.accumulated,
+      config.cardColorTranslate, config.cardColorLookup, buildDictBody, showHint]);
+
   // 复制当前结果文本（工具栏复制按钮已移除，改为结果卡片内双击自动复制）
   const copyResult = async (e) => {
     if (e && typeof e.preventDefault === "function") e.preventDefault(); // 阻止双击默认选词
     let text = "";
     if (state.status === "dict" && state.dict) {
-      const d = state.dict;
-      const lines = [d.word];
-      if (d.ukphone || d.usphone) {
-        lines.push(`英 /${d.ukphone}/  美 /${d.usphone}/`);
-      }
-      // 同一词性的释义合并成一行（用「；」分隔），不同词性分多行 —— 与有道展示一致
-      const groups = [];
-      d.translations.forEach((t) => {
-        const pos = t.pos || "";
-        if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
-          groups[groups.length - 1].meanings.push(t.meaning);
-        } else {
-          groups.push({ pos, meanings: [t.meaning] });
-        }
-      });
-      groups.forEach((g) => {
-        lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);
-      });
-      text = lines.join("\n");
+      // 复制场景：完整内容（单词 + 音标 + 释义），includeWord=true
+      text = buildDictBody(state.dict, true);
     } else {
       text = state.accumulated;
     }
@@ -843,7 +911,7 @@ function CardPage() {
           </span>
         ) : (
           <span className="card-toolbar-actions">
-            {/* AI 解释界面：发音按钮在前，搜索/重新生成后移 */}
+            {/* AI 解释界面：发音按钮在前，搜索/重新生成后移；「添加」按钮紧随发音按钮 */}
             {state.mode === "explain" && state.status === "done" && (
               <>
                 <button
@@ -864,7 +932,29 @@ function CardPage() {
                   <SpeakerIcon />
                   <span className="speak-label">{speaking === "us" ? "…" : "美"}</span>
                 </button>
+                <button
+                  className="icon-btn add-btn"
+                  title="添加为卡片：单词为标题、AI 解释为正文（Markdown）"
+                  onClick={addCard}
+                >
+                  <AddIcon />
+                </button>
               </>
+            )}
+            {/* 查词结果 / 翻译结果：「添加」按钮位于搜索按钮之前 */}
+            {(state.status === "dict" ||
+              (state.mode === "translate" && state.status === "done")) && (
+              <button
+                className="icon-btn add-btn"
+                title={
+                  state.status === "dict"
+                    ? "添加为卡片：单词为标题、查词结果（音标+释义）为正文"
+                    : "添加为卡片：原句为标题、翻译为正文（Markdown）"
+                }
+                onClick={addCard}
+              >
+                <AddIcon />
+              </button>
             )}
             <button
               className="icon-btn search-btn"

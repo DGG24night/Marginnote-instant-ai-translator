@@ -19,6 +19,8 @@ var MNIATSettings = (function () {
       lookupCacheSize: 50,          // 查词结果缓存条数（0 = 不使用缓存）
       translateCacheSize: 50,       // AI 翻译结果缓存条数（0 = 不使用缓存）
       targetLang: "zh-CN",
+      contextLength: 200,           // prompt {context} 变量的上下文长度：选区前后各取 N 字符（0 = 不获取上下文）
+      translateThreshold: 3,        // 触发翻译的字符数阈值：选区 trim 后字符数 > N 走翻译，否则按查词处理（默认 3，可查词组）
       triggerMode: "auto",          // auto=选中即翻译 | button=先显示悬浮按钮
       theme: "light",               // light | dark
       fontSize: "medium",           // small | medium | large
@@ -28,6 +30,8 @@ var MNIATSettings = (function () {
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
+      cardColorTranslate: 0,        // 「添加卡片」颜色索引 0-15（翻译任务创建卡片时使用）
+      cardColorLookup: 0,           // 「添加卡片」颜色索引 0-15（查词/AI 解释任务创建卡片时使用）
       translateService: "ai",       // 翻译引擎：ai=AI 翻译 | machine=机器翻译（百度/小牛/阿里云/腾讯等）
       machineProviders: [],         // [{id,vendor,name,appid,secretKey,accessKeyId,accessKeySecret,secretId,secretKey}] 机器翻译账户列表
       machineRouting: {             // 机器翻译路由配置
@@ -90,6 +94,30 @@ var MNIATSettings = (function () {
       translate: (raw.prompts && typeof raw.prompts.translate === "string") ? raw.prompts.translate : "",
       explain: (raw.prompts && typeof raw.prompts.explain === "string") ? raw.prompts.explain : ""
     };
+
+    // 选区上下文长度深兜底（老配置无该字段时给默认值 200；0 = 关闭上下文）
+    merged.contextLength =
+      typeof raw.contextLength === "number" && raw.contextLength >= 0
+        ? Math.min(Math.floor(raw.contextLength), 2000)
+        : 200;
+
+    // 触发翻译的单词数阈值深兜底（老配置无该字段时默认 3；限制非负整数）
+    // 兼容：translateThreshold（v0.7.4 早期版的字段名）→ 迁移为 translateWordCount
+    var legacyThreshold = (typeof raw.translateThreshold === "number" && raw.translateThreshold >= 0)
+      ? raw.translateThreshold : null;
+    merged.translateWordCount =
+      typeof raw.translateWordCount === "number" && raw.translateWordCount >= 0
+        ? Math.min(Math.floor(raw.translateWordCount), 100)
+        : (legacyThreshold != null ? Math.min(Math.floor(legacyThreshold), 100) : 3);
+
+    // 创建卡片颜色深兜底（老配置无字段时默认 0；限制 0-15 整数）
+    function pickColorIndex(v) {
+      return typeof v === "number" && v >= 0 && v <= 15
+        ? Math.floor(v)
+        : 0;
+    }
+    merged.cardColorTranslate = pickColorIndex(raw.cardColorTranslate);
+    merged.cardColorLookup = pickColorIndex(raw.cardColorLookup);
 
     // 机器翻译配置深兜底（老配置无这些字段时给默认值）
     merged.translateService = raw.translateService === "machine" ? "machine" : "ai";

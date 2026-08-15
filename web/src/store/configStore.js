@@ -132,6 +132,8 @@ const EMPTY_CONFIG = {
   lookupCacheSize: 50,
   translateCacheSize: 50,
   targetLang: "zh-CN",
+  contextLength: 200, // prompt {context} 变量：选区前后各取 N 字符（0 = 不获取上下文）
+  translateWordCount: 3, // 触发翻译的单词数阈值：选区单词数 > N 走翻译，否则按查词处理（中文按字符算、英文按空格分词）
   triggerMode: "auto",
   theme: "light",
   fontSize: "medium",
@@ -141,6 +143,8 @@ const EMPTY_CONFIG = {
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
+  cardColorTranslate: 0, // 「添加卡片」颜色索引 0-15（翻译任务）
+  cardColorLookup: 0, // 「添加卡片」颜色索引 0-15（查词/AI 解释任务）
   translateService: "ai", // ai=AI 翻译 | machine=机器翻译（百度等开放平台）
   machineProviders: [], // [{id,name,appid,secretKey}] 机器翻译服务账户列表
   machineRouting: { providerId: "", apiType: "llm", domain: "it" }, // llm|standard|domain + 领域值
