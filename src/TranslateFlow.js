@@ -441,7 +441,17 @@ var MNIATFlow = (function () {
         // 卡片选中态回退（2026-08-15）：primary（标题）失败时尝试用 fallbackText
         // （摘录正文）再发起一次请求，避免 from/to 相同等错误导致完全无响应。
         // 仅一次重试（_fallbackTried 标志）防止无限循环。
+        //
+        // ⚠️ 限定（2026-08-15）：仅当「查词服务是真实词典」时启用 fallback。
+        // 当 lookupProvider="ai" 时，excerptText 本身就是 AI 解释输出，
+        // 拿它再跑 AI 解释无意义（重复请求、消耗 API、且 prompt 含中英混合长文本易报错）。
         if (job.fallbackText && job.fallbackText !== job.text && !job._fallbackTried) {
+          var fbCfg = MNIATSettings.load();
+          if (fbCfg.lookupProvider === "ai") {
+            // 跳过 fallback：直接报错
+            pushEvent({ type: "error", message: message });
+            return;
+          }
           job._fallbackTried = true;
           console.log("[MNIATFlow] primary failed, retry with fallback text: \"" +
             job.fallbackText.slice(0, 40) + "\"");

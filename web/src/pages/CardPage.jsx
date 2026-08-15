@@ -752,6 +752,9 @@ function CardPage() {
       showHint("暂无内容可添加为卡片");
       return;
     }
+    // 规范化正文：markdown 水平线 `---` 前后必须有空行，否则会被渲染成 `## ---` 二级标题
+    // （用户实测 2026-08-15：AI 解释输出 `**音标**\n---\n**释义**` 时 MN 排版混乱）
+    body = normalizeCardBody(body);
     const colorIndex = kind === "translate"
       ? (Number.isFinite(config.cardColorTranslate) ? config.cardColorTranslate : 0)
       : (Number.isFinite(config.cardColorLookup) ? config.cardColorLookup : 0);
@@ -763,6 +766,33 @@ function CardPage() {
     }
   }, [state.status, state.dict, state.mode, state.sourceText, state.accumulated,
       config.cardColorTranslate, config.cardColorLookup, buildDictBody, showHint]);
+
+  // 规范化卡片正文的 markdown 水平线：
+  //   - 识别单独成行的 `---`（允许行尾空格）；
+  //   - 若该行前一行非空，则补一个空行；若后一行非空，则补一个空行；
+  //   - 已带空行的（`\n\n---\n\n`）保持原样不重复添加。
+  // 这是纯函数（不依赖组件状态），独立于 useCallback 之外。
+  const normalizeCardBody = (src) => {
+    if (!src) return src;
+    const lines = src.split("\n");
+    const out = [];
+    let needBlankBefore = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isHr = /^---[ \t]*$/.test(line);
+      if (isHr) {
+        // 前一行非空 → 补空行（避免 `---` 与上文粘连）
+        if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
+        out.push(line);
+        needBlankBefore = true; // 后一行非空时补空行
+        continue;
+      }
+      if (needBlankBefore && line.trim() !== "") out.push("");
+      out.push(line);
+      needBlankBefore = false;
+    }
+    return out.join("\n");
+  };
 
   // 复制当前结果文本（工具栏复制按钮已移除，改为结果卡片内双击自动复制）
   const copyResult = async (e) => {
