@@ -8,6 +8,20 @@ function genId() {
   return `p-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+// 拖拽排序目标列表解析：
+//   "providers" → config.providers；"machineProviders" → config.machineProviders；
+//   "providers.<id>.models" → 指定提供商内的模型列表。找不到返回 null。
+function resolveList(config, path) {
+  if (path === "providers") return config.providers;
+  if (path === "machineProviders") return config.machineProviders;
+  const m = /^providers\.(.+)\.models$/.exec(path);
+  if (m) {
+    const p = config.providers.find((x) => x.id === m[1]);
+    return p ? p.models : null;
+  }
+  return null;
+}
+
 // 防御性清理：移除各提供商中 id 为空的模型（兼容历史脏数据）
 function sanitizeConfig(config) {
   let changed = false;
@@ -225,6 +239,22 @@ export const useConfigStore = create((set, get) => ({
           config.routing[kind] = { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" };
         }
       });
+    });
+  },
+
+  // 拖拽排序（设置页「服务提供商」bar 图标）：
+  // path = "providers"（AI 提供商）| "machineProviders"（机器翻译服务）| "providers.<id>.models"（某提供商内模型）
+  // 把 path 数组的 from 项移动到 to（to 为插入位置索引，语义 = 插到目标项之前）。
+  // 顺序持久化后，结果卡片长按「重新生成」的模型列表会按同样顺序展示（渲染同一份数据）。
+  moveItem: async (path, from, to) => {
+    await get().update((config) => {
+      const arr = resolveList(config, path);
+      if (!arr || from < 0 || from >= arr.length) return;
+      const item = arr.splice(from, 1)[0];
+      // 删除后元素左移：from 在 to 之前时目标索引减 1
+      let target = to > from ? to - 1 : to;
+      target = Math.max(0, Math.min(target, arr.length));
+      arr.splice(target, 0, item);
     });
   },
 

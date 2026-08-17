@@ -63,6 +63,11 @@ function createMNInstantAITranslatorAddon(mainPath) {
         onClear: function () {
           // 选区清空：收起悬浮按钮（结果卡片保留，由用户手动关闭或被新选区取代）
           MNIATFloatingCard.hideTrigger();
+        },
+        // 图钉固定状态查询：选区监听在「点击空白关闭卡片」判定时调用，
+        // 固定时点击脑图空白/菜单消失不关闭卡片（文档模式 blur 路径已有 pinned 检查）。
+        isCardPinned: function () {
+          return MNIATFloatingCard.isPinned();
         }
       });
     },

@@ -467,6 +467,16 @@ var MNIATFloatingCard = (function () {
         controller.view.removeFromSuperview();
       }
       this.hideTrigger();
+      // 通知选区监听：清空 lastFiredText，让"再次选中同一文本"等同首次选中。
+      // 所有关闭路径（onBlankClick / onLostFocus / closeCard bridge / notebookWillClose）
+      // 都走 hide，因此统一在这里通知一次。TranslateFlow.cancelCurrent
+      // 不再调（避免 handleSelection 内取消时把"等待被关闭的"状态一起清掉造成抽搐）。
+      try {
+        if (typeof MNIATSelectionMonitor !== "undefined" &&
+          MNIATSelectionMonitor && typeof MNIATSelectionMonitor.notifyCardClosed === "function") {
+          MNIATSelectionMonitor.notifyCardClosed();
+        }
+      } catch (e) { /* 忽略通知失败，不影响隐藏 */ }
     },
 
     destroy: function () {
@@ -494,6 +504,12 @@ var MNIATFloatingCard = (function () {
       // 脱离卡片，导致之后点外部不再触发 blur（bug：取消固定后点外部不关闭）。
       requestCardFocus();
       return { pinned: pinned };
+    },
+
+    // 图钉固定状态查询：选区监听在脑图模式「点击空白关闭」判定时使用——
+    // 固定时点空白不关闭卡片（与文档模式 blur 路径的 pinned 检查一致）。
+    isPinned: function () {
+      return pinned;
     },
 
     // ---------- 悬浮触发按钮（triggerMode = button） ----------

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MNBridge from "../lib/mnBridge";
 import { PROVIDER_PRESETS, MACHINE_PROVIDER_PRESETS, useConfigStore } from "../store/configStore";
 
@@ -177,6 +177,122 @@ function EyeIcon() {
   );
 }
 
+// bar 图标（三横线，与结果卡片工具栏最左侧的 bar 图标同款）：
+// 设置页「服务提供商」的拖拽排序手柄（拖动提供商/模型调整顺序，
+// 长按「重新生成」的模型列表按同样顺序展示）。
+const DRAG_PATH =
+  "M173.708 319.953h673.184c35.347 0 64-28.654 64-64s-28.653-64-64-64H173.708c-35.346 0-64 28.654-64 64s28.653 64 64 64zM846.892 449.717H173.708c-35.346 0-64 28.654-64 64 0 35.346 28.654 64 64 64h673.184c35.347 0 64-28.654 64-64 0-35.346-28.654-64-64-64zM846.892 704.165H173.708c-35.346 0-64 28.654-64 64s28.654 64 64 64h673.184c35.347 0 64-28.654 64-64s-28.654-64-64-64z";
+
+function DragIcon() {
+  return (
+    <svg className="icon-svg drag-icon" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      <path d={DRAG_PATH} fill="currentColor" />
+    </svg>
+  );
+}
+
+// ---------- 拖拽排序（bar 图标手柄） ----------
+// 基于 mouse 事件实现，兼容 UIWebView 老内核（不依赖 HTML5 Drag & Drop / Pointer Events）。
+// 用法：const drag = useDragSort((from, to) => moveItem(path, from, to));
+//   - 每行 drag-handle 的 onMouseDown 调 drag.startDrag(index, e, listEl)；
+//   - 拖拽期间被拖行加 .is-dragging；插入位置由独立 .drop-indicator 元素
+//     实时渲染（覆盖 insertIndex === rows.length 末尾之后场景）；
+//   - mouseup / 窗口失焦结束，回调 onMove(from, to) 由调用方重排并持久化（仅一次）。
+// 返回 { dragIndex, insertIndex, indicatorTop, startDrag }，其中
+//   indicatorTop 为相对 listEl 顶部的像素偏移（拖动未开始时为 null）。
+function useDragSort(onMove) {
+  const [dragIndex, setDragIndex] = useState(null);
+  const [insertIndex, setInsertIndex] = useState(null);
+  const [indicatorTop, setIndicatorTop] = useState(null);
+  const stRef = useRef(null); // { index, insertIndex, indicatorTop, rows, listTop }
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+
+  const clearState = useCallback(() => {
+    stRef.current = null;
+    setDragIndex(null);
+    setInsertIndex(null);
+    setIndicatorTop(null);
+  }, []);
+
+  const handleMove = useCallback((e) => {
+    const st = stRef.current;
+    if (!st) return;
+    const y = e.clientY;
+    const rows = st.rows;
+    // 插入位置 = "插到 target 索引之前"（target=rows.length 表示末尾之后）
+    //   鼠标在某行上半部分 → 立刻 target=该行索引（break）；
+    //   鼠标在某行下半部分 → 继续循环，target=i+1（下一行之前）；
+    //   循环结束时 i=rows.length-1，target=rows.length，即可拖到末尾之后。
+    let target = st.index;
+    for (let i = 0; i < rows.length; i++) {
+      if (y < rows[i].top + rows[i].height / 2) {
+        target = i;
+        break;
+      }
+      target = i + 1;
+    }
+    // 指示器位置 = 相对 listEl 顶部的偏移（绝对定位 top 用）
+    const listTop = st.listTop;
+    const top = target < rows.length
+      ? rows[target].top - listTop
+      : (rows[rows.length - 1].top + rows[rows.length - 1].height) - listTop;
+    if (target !== st.insertIndex || top !== st.indicatorTop) {
+      st.insertIndex = target;
+      st.indicatorTop = top;
+      setInsertIndex(target);
+      setIndicatorTop(top);
+    }
+  }, []);
+
+  const handleUp = useCallback(() => {
+    const st = stRef.current;
+    document.removeEventListener("mousemove", handleMove, true);
+    document.removeEventListener("mouseup", handleUp, true);
+    window.removeEventListener("blur", handleUp);
+    document.body.classList.remove("drag-sorting");
+    if (!st) return;
+    const from = st.index;
+    const to = st.insertIndex;
+    clearState();
+    if (typeof to === "number" && to !== from && onMoveRef.current) {
+      onMoveRef.current(from, to);
+    }
+  }, [handleMove, clearState]);
+
+  const startDrag = useCallback((index, e, listEl) => {
+    if (!e || e.button !== 0) return; // 仅鼠标左键
+    e.preventDefault(); // 阻止文本选择 / 原生拖拽
+    e.stopPropagation();
+    if (!listEl) return;
+    // 拖动开始时清除文本选区（避免 mousedown 后 UIWebView 选区残留产生蓝色矩形覆盖）
+    try {
+      if (typeof window !== "undefined" && window.getSelection) {
+        const sel = window.getSelection();
+        if (sel) sel.removeAllRanges();
+      }
+    } catch (err) { /* 忽略 */ }
+    const listRect = listEl.getBoundingClientRect();
+    const rows = Array.prototype.slice.call(listEl.children).map((el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, height: r.height };
+    });
+    const initialTop = rows[index]
+      ? rows[index].top - listRect.top
+      : 0;
+    stRef.current = { index, insertIndex: index, indicatorTop: initialTop, rows, listTop: listRect.top };
+    setDragIndex(index);
+    setInsertIndex(index);
+    setIndicatorTop(initialTop);
+    document.body.classList.add("drag-sorting");
+    document.addEventListener("mousemove", handleMove, true);
+    document.addEventListener("mouseup", handleUp, true);
+    window.addEventListener("blur", handleUp);
+  }, [handleMove, handleUp]);
+
+  return { dragIndex, insertIndex, indicatorTop, startDrag };
+}
+
 // 敏感字段输入框：默认密文显示（····），点击右侧眼睛按钮切换明文/密文
 function SecretInput({ className, placeholder, value, onChange }) {
   const [show, setShow] = useState(false);
@@ -243,8 +359,10 @@ function Field({ label, hint, children }) {
 
 // ---------- 提供商卡片 ----------
 
-function ProviderCard({ provider }) {
-  const { update, removeProvider } = useConfigStore();
+// 拖拽排序 props：index（该卡在列表中的位置）、dragProps（父级 useDragSort 返回值）、
+// listRef（列表容器 ref，startDrag 需要采集各行位置）
+function ProviderCard({ provider, index, dragProps, listRef }) {
+  const { update, removeProvider, moveItem } = useConfigStore();
   const [isOpen, setIsOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testingModel, setTestingModel] = useState(null);
@@ -259,6 +377,10 @@ function ProviderCard({ provider }) {
   const [selectedModels, setSelectedModels] = useState({});
   const [modelQuery, setModelQuery] = useState("");
   const confirmTimerRef = useRef(null);
+
+  // 模型拖拽排序（每张卡独立实例；顺序与长按「重新生成」的模型列表一致）
+  const modelDrag = useDragSort((from, to) => moveItem(`providers.${provider.id}.models`, from, to));
+  const modelListRef = useRef(null);
 
   // 延时格式化：<1000ms 显示 ms，≥1s 显示 s 并保留 1 位小数；无数据返回 "—"
   const formatLatency = (ms) => {
@@ -421,8 +543,21 @@ function ProviderCard({ provider }) {
     : modelsList;
 
   return (
-    <div className={`provider-card ${isOpen ? "is-open" : ""}`}>
+    <div
+      className={
+        `provider-card ${isOpen ? "is-open" : ""}` +
+        (dragProps.dragIndex === index ? " is-dragging" : "")
+      }
+    >
       <div className="provider-head">
+        <button
+          className="drag-handle"
+          title="拖动排序提供商（长按「重新生成」的模型列表顺序随之调整）"
+          aria-label="拖动排序提供商"
+          onMouseDown={(e) => dragProps.startDrag(index, e, listRef.current)}
+        >
+          <DragIcon />
+        </button>
         <button
           className="provider-toggle"
           onClick={() => setIsOpen((v) => !v)}
@@ -475,42 +610,61 @@ function ProviderCard({ provider }) {
             {provider.models.length === 0 && (
               <p className="field-hint">暂无模型，可手动添加或点击下方「获取模型列表」。</p>
             )}
-            {provider.models.map((model, index) => (
-              <div className="model-row" key={index}>
-                <input
-                  className="input"
-                  placeholder="模型 ID，如 deepseek-chat"
-                  value={model.id}
-                  onChange={(e) =>
-                    patch((p) => { p.models[index].id = e.target.value; })
+            <div className="model-list" ref={modelListRef}>
+              {provider.models.map((model, modelIndex) => (
+                <div
+                  className={
+                    `model-row` +
+                    (modelDrag.dragIndex === modelIndex ? " is-dragging" : "")
                   }
-                />
-                <label className="checkbox">
+                  key={modelIndex}
+                >
+                  <button
+                    className="drag-handle"
+                    title="拖动排序模型（长按「重新生成」列表顺序随之调整）"
+                    aria-label="拖动排序模型"
+                    onMouseDown={(e) => modelDrag.startDrag(modelIndex, e, modelListRef.current)}
+                  >
+                    <DragIcon />
+                  </button>
                   <input
-                    type="checkbox"
-                    checked={!!model.supportsReasoning}
+                    className="input"
+                    placeholder="模型 ID，如 deepseek-chat"
+                    value={model.id}
                     onChange={(e) =>
-                      patch((p) => { p.models[index].supportsReasoning = e.target.checked; })
+                      patch((p) => { p.models[modelIndex].id = e.target.value; })
                     }
                   />
-                  支持推理
-                </label>
-                <button
-                  className="btn btn-sm"
-                  disabled={testing || bulkTesting}
-                  onClick={() => runTest(model.id)}
-                  title="用该模型发送最小请求验证连通性"
-                >
-                  {testing && testingModel === model.id ? "测试中…" : "测试"}
-                </button>
-                <button
-                  className="btn btn-sm"
-                  onClick={() => patch((p) => { p.models.splice(index, 1); })}
-                >
-                  移除
-                </button>
-              </div>
-            ))}
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={!!model.supportsReasoning}
+                      onChange={(e) =>
+                        patch((p) => { p.models[modelIndex].supportsReasoning = e.target.checked; })
+                      }
+                    />
+                    支持推理
+                  </label>
+                  <button
+                    className="btn btn-sm"
+                    disabled={testing || bulkTesting}
+                    onClick={() => runTest(model.id)}
+                    title="用该模型发送最小请求验证连通性"
+                  >
+                    {testing && testingModel === model.id ? "测试中…" : "测试"}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => patch((p) => { p.models.splice(modelIndex, 1); })}
+                  >
+                    移除
+                  </button>
+                </div>
+              ))}
+              {modelDrag.indicatorTop != null && (
+                <div className="drop-indicator" style={{ top: modelDrag.indicatorTop }} />
+              )}
+            </div>
             <div className="model-toolbar">
               <button
                 className="btn btn-sm"
@@ -644,9 +798,11 @@ function ProviderCard({ provider }) {
   );
 }
 
-// 机器翻译服务商卡片：复用 ProviderCard 的「点击 → 显示确认 → 再点确认」两步删除模式
-function MachineProviderCard({ mp, idx }) {
+// 机器翻译服务商卡片：复用 ProviderCard 的「点击 → 显示确认 → 再点确认」两步删除模式；
+// ID/KEY 字段默认折叠（isOpen=false），点击 ▶ 展开，避免页面过长。
+function MachineProviderCard({ mp, idx, dragProps, listRef }) {
   const { update } = useConfigStore();
+  const [isOpen, setIsOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const confirmTimerRef = useRef(null);
 
@@ -674,20 +830,35 @@ function MachineProviderCard({ mp, idx }) {
       if (target) mutator(target);
     });
 
-  const vendorLabel = mp.vendor === "niutrans" ? "小牛" :
-    (mp.vendor === "aliyun" ? "阿里云" :
-    (mp.vendor === "tencent" ? "腾讯云" :
-    (mp.vendor === "volcengine" ? "火山" : "百度")));
-
   return (
-    <div className="machine-provider-card">
+    <div
+      className={
+        `machine-provider-card ${isOpen ? "is-open" : ""}` +
+        (dragProps.dragIndex === idx ? " is-dragging" : "")
+      }
+    >
       <div className="machine-provider-head">
+        <button
+          className="drag-handle"
+          title="拖动排序机器翻译服务（长按「重新生成」列表顺序随之调整）"
+          aria-label="拖动排序机器翻译服务"
+          onMouseDown={(e) => dragProps.startDrag(idx, e, listRef.current)}
+        >
+          <DragIcon />
+        </button>
+        <button
+          className="provider-toggle"
+          onClick={() => setIsOpen((v) => !v)}
+          aria-label={isOpen ? "收起" : "展开"}
+          title={isOpen ? "收起密钥字段" : "展开密钥字段"}
+        >
+          <span className={`provider-caret ${isOpen ? "is-open" : ""}`}>▶</span>
+        </button>
         <input
           className="input provider-name"
           value={mp.name}
           onChange={(e) => patch((p) => { p.name = e.target.value; })}
         />
-        <span className="machine-vendor-tag">{vendorLabel}</span>
         <button
           className={`btn btn-danger btn-sm ${confirmingDelete ? "btn-danger-solid" : ""}`}
           onClick={handleDelete}
@@ -698,102 +869,106 @@ function MachineProviderCard({ mp, idx }) {
         </button>
       </div>
 
-      {mp.vendor === "aliyun" ? (
-        <>
-          <Field
-            label="AccessKey ID"
-            hint="阿里云 RAM 访问密钥 ID（控制台 → 访问控制 RAM → 用户 → 创建 AccessKey）"
-          >
-            <SecretInput
-              placeholder="LTAI..."
-              value={mp.accessKeyId || ""}
-              onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
-            />
-          </Field>
-          <Field
-            label="AccessKey Secret"
-            hint="阿里云 RAM 访问密钥 Secret（仅创建时可见，请妥善保存）"
-          >
-            <SecretInput
-              placeholder="阿里云 AccessKey Secret"
-              value={mp.accessKeySecret || ""}
-              onChange={(e) => patch((p) => { p.accessKeySecret = e.target.value; })}
-            />
-          </Field>
-        </>
-      ) : mp.vendor === "tencent" ? (
-        <>
-          <Field
-            label="SecretId"
-            hint="腾讯云 API 密钥 ID（控制台 → 访问管理 → API 密钥管理）"
-          >
-            <SecretInput
-              placeholder="AKID..."
-              value={mp.secretId || ""}
-              onChange={(e) => patch((p) => { p.secretId = e.target.value; })}
-            />
-          </Field>
-          <Field
-            label="SecretKey"
-            hint="腾讯云 API 密钥 SecretKey（仅创建时可见，请妥善保存）"
-          >
-            <SecretInput
-              placeholder="腾讯云 SecretKey"
-              value={mp.secretKey || ""}
-              onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
-            />
-          </Field>
-        </>
-      ) : mp.vendor === "volcengine" ? (
-        <>
-          <Field
-            label="AccessKey ID"
-            hint="火山引擎访问密钥 ID（控制台 → 访问控制 → 密钥管理）"
-          >
-            <SecretInput
-              placeholder="AK..."
-              value={mp.accessKeyId || ""}
-              onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
-            />
-          </Field>
-          <Field
-            label="SecretAccessKey"
-            hint="火山引擎访问密钥（仅创建时可见，请妥善保存）"
-          >
-            <SecretInput
-              placeholder="火山引擎 SecretAccessKey"
-              value={mp.secretAccessKey || ""}
-              onChange={(e) => patch((p) => { p.secretAccessKey = e.target.value; })}
-            />
-          </Field>
-        </>
-      ) : (
-        <>
-          <Field
-            label="APPID"
-            hint={mp.vendor === "niutrans"
-              ? "小牛 Flash 需要；仅使用 Pro（大模型）可留空"
-              : "百度开放平台 APPID（必填）"}
-          >
-            <SecretInput
-              placeholder={mp.vendor === "niutrans" ? "小牛 Flash 专用（Pro 可留空）" : "百度开放平台 APPID"}
-              value={mp.appid}
-              onChange={(e) => patch((p) => { p.appid = e.target.value; })}
-            />
-          </Field>
-          <Field
-            label="密钥（Secret Key / API Key）"
-            hint={mp.vendor === "niutrans"
-              ? "小牛开放平台 API Key（控制台→API应用，Flash 与 Pro 通用）"
-              : "百度开放平台密钥（必填）"}
-          >
-            <SecretInput
-              placeholder={mp.vendor === "niutrans" ? "小牛 API Key" : "百度开放平台密钥"}
-              value={mp.secretKey}
-              onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
-            />
-          </Field>
-        </>
+      {isOpen && (
+        <div className="machine-provider-body">
+          {mp.vendor === "aliyun" ? (
+            <>
+              <Field
+                label="AccessKey ID"
+                hint="阿里云 RAM 访问密钥 ID（控制台 → 访问控制 RAM → 用户 → 创建 AccessKey）"
+              >
+                <SecretInput
+                  placeholder="LTAI..."
+                  value={mp.accessKeyId || ""}
+                  onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
+                />
+              </Field>
+              <Field
+                label="AccessKey Secret"
+                hint="阿里云 RAM 访问密钥 Secret（仅创建时可见，请妥善保存）"
+              >
+                <SecretInput
+                  placeholder="阿里云 AccessKey Secret"
+                  value={mp.accessKeySecret || ""}
+                  onChange={(e) => patch((p) => { p.accessKeySecret = e.target.value; })}
+                />
+              </Field>
+            </>
+          ) : mp.vendor === "tencent" ? (
+            <>
+              <Field
+                label="SecretId"
+                hint="腾讯云 API 密钥 ID（控制台 → 访问管理 → API 密钥管理）"
+              >
+                <SecretInput
+                  placeholder="AKID..."
+                  value={mp.secretId || ""}
+                  onChange={(e) => patch((p) => { p.secretId = e.target.value; })}
+                />
+              </Field>
+              <Field
+                label="SecretKey"
+                hint="腾讯云 API 密钥 SecretKey（仅创建时可见，请妥善保存）"
+              >
+                <SecretInput
+                  placeholder="腾讯云 SecretKey"
+                  value={mp.secretKey || ""}
+                  onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
+                />
+              </Field>
+            </>
+          ) : mp.vendor === "volcengine" ? (
+            <>
+              <Field
+                label="AccessKey ID"
+                hint="火山引擎访问密钥 ID（控制台 → 访问控制 → 密钥管理）"
+              >
+                <SecretInput
+                  placeholder="AK..."
+                  value={mp.accessKeyId || ""}
+                  onChange={(e) => patch((p) => { p.accessKeyId = e.target.value; })}
+                />
+              </Field>
+              <Field
+                label="SecretAccessKey"
+                hint="火山引擎访问密钥（仅创建时可见，请妥善保存）"
+              >
+                <SecretInput
+                  placeholder="火山引擎 SecretAccessKey"
+                  value={mp.secretAccessKey || ""}
+                  onChange={(e) => patch((p) => { p.secretAccessKey = e.target.value; })}
+                />
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field
+                label="APPID"
+                hint={mp.vendor === "niutrans"
+                  ? "小牛 Flash 需要；仅使用 Pro（大模型）可留空"
+                  : "百度开放平台 APPID（必填）"}
+              >
+                <SecretInput
+                  placeholder={mp.vendor === "niutrans" ? "小牛 Flash 专用（Pro 可留空）" : "百度开放平台 APPID"}
+                  value={mp.appid}
+                  onChange={(e) => patch((p) => { p.appid = e.target.value; })}
+                />
+              </Field>
+              <Field
+                label="密钥（Secret Key / API Key）"
+                hint={mp.vendor === "niutrans"
+                  ? "小牛开放平台 API Key（控制台→API应用，Flash 与 Pro 通用）"
+                  : "百度开放平台密钥（必填）"}
+              >
+                <SecretInput
+                  placeholder={mp.vendor === "niutrans" ? "小牛 API Key" : "百度开放平台密钥"}
+                  value={mp.secretKey}
+                  onChange={(e) => patch((p) => { p.secretKey = e.target.value; })}
+                />
+              </Field>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1092,7 +1267,7 @@ function ImportDialog({ onClose }) {
 // ---------- 设置主页 ----------
 
 function SettingsPage() {
-  const { config, loaded, saving, saveError, load, update, addProvider } = useConfigStore();
+  const { config, loaded, saving, saveError, load, update, addProvider, moveItem } = useConfigStore();
   const [importOpen, setImportOpen] = useState(false);
 
   const [presetIndex, setPresetIndex] = useState(0);
@@ -1100,6 +1275,12 @@ function SettingsPage() {
   const [activeTab, setActiveTab] = useState("general");
   const [aiProvidersOpen, setAiProvidersOpen] = useState(false); // AI 服务提供商默认折叠
   const [mtOpen, setMtOpen] = useState(true);                     // 机器翻译服务默认展开
+
+  // 提供商 / 机器翻译服务 拖拽排序（bar 图标手柄；顺序持久化，长按「重新生成」列表同步）
+  const providerListRef = useRef(null);
+  const mtListRef = useRef(null);
+  const providerDrag = useDragSort((from, to) => moveItem("providers", from, to));
+  const mtDrag = useDragSort((from, to) => moveItem("machineProviders", from, to));
 
   // 当前机器翻译路由所选提供商的 vendor（用于路由页动态显示接口选项）
   const mtProviders = config.machineProviders || [];
@@ -1438,6 +1619,26 @@ function SettingsPage() {
               </div>
               {aiProvidersOpen && (
                 <div className="section-collapse-body">
+                  {config.providers.length === 0 && (
+                    <p className="field-hint">尚未添加提供商。从下方预设中选择添加，然后填入 API Key。</p>
+                  )}
+                  {config.providers.length > 0 && (
+                    <div className="drag-list" ref={providerListRef}>
+                      {config.providers.map((provider, index) => (
+                        <ProviderCard
+                          key={provider.id}
+                          provider={provider}
+                          index={index}
+                          dragProps={providerDrag}
+                          listRef={providerListRef}
+                        />
+                      ))}
+                      {providerDrag.indicatorTop != null && (
+                        <div className="drop-indicator" style={{ top: providerDrag.indicatorTop }} />
+                      )}
+                    </div>
+                  )}
+                  {/* 添加按钮放在列表下方，便于在已有提供商下方继续追加（移动「添加」入口） */}
                   <div className="add-provider">
                     <select
                       className="input"
@@ -1455,12 +1656,6 @@ function SettingsPage() {
                       + 添加提供商
                     </button>
                   </div>
-                  {config.providers.length === 0 && (
-                    <p className="field-hint">尚未添加提供商。从上方预设中选择添加，然后填入 API Key。</p>
-                  )}
-                  {config.providers.map((provider) => (
-                    <ProviderCard key={provider.id} provider={provider} />
-                  ))}
                 </div>
               )}
             </div>
@@ -1476,9 +1671,22 @@ function SettingsPage() {
                   {config.machineProviders.length === 0 && (
                     <p className="field-hint">尚未配置机器翻译账户。在上方下拉中选择要添加的服务商，再点击「+ 添加」。</p>
                   )}
-                  {config.machineProviders.map((mp, idx) => (
-                    <MachineProviderCard key={mp.id} mp={mp} idx={idx} />
-                  ))}
+                  {config.machineProviders.length > 0 && (
+                    <div className="drag-list" ref={mtListRef}>
+                      {config.machineProviders.map((mp, idx) => (
+                        <MachineProviderCard
+                          key={mp.id}
+                          mp={mp}
+                          idx={idx}
+                          dragProps={mtDrag}
+                          listRef={mtListRef}
+                        />
+                      ))}
+                      {mtDrag.indicatorTop != null && (
+                        <div className="drop-indicator" style={{ top: mtDrag.indicatorTop }} />
+                      )}
+                    </div>
+                  )}
                   <div className="add-provider">
                     <select
                       className="input"

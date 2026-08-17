@@ -399,21 +399,108 @@ body {
 }
 
 .provider-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 14px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
 }
 
 .provider-head {
   display: flex;
   align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+/* 展开时给 head 与 body 之间留出空隙（折叠态不占空间，卡片更紧凑） */
+.provider-card.is-open .provider-head {
   margin-bottom: 10px;
+}
+
+/* 设置页「服务提供商」拖拽排序手柄（bar 图标，与结果卡片工具栏最左侧图标同款）：
+   拖动提供商/模型调整顺序，长按「重新生成」的模型列表按同样顺序展示 */
+.drag-list {
+  position: relative;
+}
+
+.drag-handle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  padding: 4px 6px;
+  margin-right: 4px;
+  border-radius: 6px;
+  cursor: grab;
+  line-height: 1;
+}
+
+.drag-handle:hover {
+  background: var(--bg-hover);
+  opacity: 0.9;
+  color: var(--text);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle .drag-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* 拖拽中：被拖行半透明（视觉上"拿起"） */
+.drag-list .is-dragging,
+.model-list .is-dragging {
+  opacity: 0.45;
+}
+
+/* 拖拽中：插入位置指示器（独立元素，覆盖拖到末尾之后无行可挂的场景） */
+.drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* 拖拽期间：禁止文本选择并隐藏 macOS 文本选中蓝色高亮，避免覆盖拖动行的"幽灵选区" */
+.drag-list,
+.drag-list *,
+.model-list,
+.model-list *,
+.drag-handle {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.drag-sorting {
+  user-select: none;
+  -webkit-user-select: none;
+  /* 关闭系统拖拽视觉反馈（macOS 拖拽时半透明矩形"drag image"） */
+  -webkit-user-drag: none;
 }
 
 .provider-name {
   font-weight: 600;
-  margin-right: 10px;
+  font-size: 14px;
+  height: 30px;
+  padding: 3px 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  margin-right: 0;
 }
 
 /* 折叠/展开 */
@@ -422,11 +509,23 @@ body {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px 6px;
-  margin-right: 4px;
+  padding: 4px 5px;
+  margin-right: 0;
   border-radius: 6px;
   flex-shrink: 0;
   line-height: 1;
+}
+
+/* provider-head 内：取消手柄/折叠按钮/名称 input 的 margin-right（由 head 的 gap 统一控制间距） */
+.provider-head .drag-handle,
+.provider-head .provider-toggle,
+.provider-head .provider-name {
+  margin-right: 0;
+}
+
+/* provider-head 内：删除按钮推到最右侧，name + meta 在左，视觉对称 */
+.provider-head .btn-danger {
+  margin-left: auto;
 }
 
 .provider-toggle:hover {
@@ -496,16 +595,35 @@ body {
 
 /* 机器翻译账户卡片 */
 .machine-provider-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
 }
 
 .machine-provider-head {
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+/* 展开时给 head 与 body 之间留出空隙（折叠态更紧凑） */
+.machine-provider-card.is-open .machine-provider-head {
+  margin-bottom: 10px;
+}
+
+/* 机器翻译 head 内：取消子元素 margin，由 head 的 gap 统一控制间距；删除按钮贴右 */
+.machine-provider-head .drag-handle,
+.machine-provider-head .provider-toggle,
+.machine-provider-head .provider-name,
+.machine-provider-head .machine-vendor-tag {
+  margin-right: 0;
+}
+
+.machine-provider-head .btn-danger {
+  margin-left: auto;
 }
 
 /* 「偏好」分块标题与三列/换行的勾选栅格 */
@@ -532,8 +650,13 @@ body {
 
 .machine-provider-head .provider-name {
   font-weight: 600;
-  margin-right: 10px;
-  flex: 1;
+  font-size: 14px;
+  height: 30px;
+  padding: 3px 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  margin-right: 0;
 }
 
 /* 机器翻译提供商标签（百度/小牛） */
@@ -545,7 +668,7 @@ body {
   border-radius: 8px;
   color: #fff;
   background: rgb(112, 181, 120);
-  margin-right: 8px;
+  margin-right: 0;
 }
 
 .route-editor.mt-route-editor {
@@ -555,8 +678,6 @@ body {
 }
 
 .provider-meta {
-  margin-left: auto;
-  margin-right: 10px;
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -567,6 +688,7 @@ body {
 }
 
 .model-row {
+  position: relative;
   display: flex;
   align-items: center;
   margin-bottom: 8px;

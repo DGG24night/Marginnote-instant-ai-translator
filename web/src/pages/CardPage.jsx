@@ -721,6 +721,14 @@ function CardPage() {
       }
     });
     if (groups.length > 0) {
+      // 音标与释义两部分都存在时，在中间插入 `---` 分隔线（上下各空一行）；
+      // 仅有其一不插入（用户可能只查到一个字段）。
+      // `normalizeCardBody` 在保存卡片时也会兜底补空行，但这里显式加上更稳。
+      if (d.ukphone || d.usphone) {
+        lines.push("");
+        lines.push("---");
+        lines.push("");
+      }
       lines.push("**释义**");
       groups.forEach((g) => {
         lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);

@@ -51,6 +51,17 @@ var MNIATSelectionMonitor = (function () {
     }
   }
 
+  // 结果卡片是否被图钉固定（callbacks.isCardPinned 由插件实例注入）：
+  // 固定时「点击空白/菜单消失」不关闭卡片（脑图模式 blur 失效走 monitor 关闭路径，
+  // 必须在这里感知 pinned；文档模式 blur 路径在 FloatingCard 侧已有 pinned 检查）。
+  function isCardPinned() {
+    try {
+      return callbacks.isCardPinned ? !!callbacks.isCardPinned() : false;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function readDocController() {
     try {
       var studyController = Application.sharedInstance().studyController(targetWindow);
@@ -279,11 +290,13 @@ var MNIATSelectionMonitor = (function () {
       pendingFallback = null;
       pendingNoteId = "";
       if (lastFiredText) {
-        if (canBlankClose && (menuJustShown || (menuJustHidden && mindMapOnly))) {
+        if (canBlankClose && !isCardPinned() && (menuJustShown || (menuJustHidden && mindMapOnly))) {
           console.log("[MNIATMonitor] blank click / menu hidden -> hide card");
           blankClosed = true;
           if (callbacks.onBlankClick) callbacks.onBlankClick();
         } else if (callbacks.onClear) {
+          // 图钉固定（isCardPinned）时不关闭卡片，仅收起悬浮按钮；
+          // blankClosed 保持 false，取消固定后再次点击空白可正常关闭。
           callbacks.onClear();
         }
         // 不清空 lastFiredText/lastFiredNoteId：残留焦点笔记可能持续读到同文本，
@@ -296,7 +309,11 @@ var MNIATSelectionMonitor = (function () {
       // 同一文本再次出现。若来源是同一张焦点笔记（点击空白后焦点笔记残留上一张卡片）
       // 且菜单新弹出 → 视为「点击卡片外部」→ 关闭卡片（弥补 blur 失效）。
       // 无 noteId（文档选区重复）/ noteId 不同 → 普通重复，不处理。
-      if (canBlankClose && focusNoteId && focusNoteId === lastFiredNoteId &&
+      // 注（2026-08-17）：「关闭卡片后再次选中同一词」由 FloatingCardController.hide
+      // → MNIATSelectionMonitor.notifyCardClosed 在关闭时清空 lastFiredText，
+      // 让再次选中走「新文本触发」流程，等同首次选中，无需在 tick 内做特殊判定。
+      // 图钉固定（isCardPinned）时点击空白不关闭卡片（与文档模式 blur 路径一致）。
+      if (canBlankClose && !isCardPinned() && focusNoteId && focusNoteId === lastFiredNoteId &&
         (menuJustShown || (menuJustHidden && mindMapOnly))) {
         console.log("[MNIATMonitor] same note + menu edge -> blank click, hide card");
         blankClosed = true;
@@ -380,6 +397,19 @@ var MNIATSelectionMonitor = (function () {
 
     isRunning: function () {
       return !!timer;
+    },
+
+    // 卡片关闭后重置上次触发标记（2026-08-17 修复）：
+    // TranslateFlow.cancelCurrent 在卡片关闭时调用本方法，清空 lastFiredText。
+    // 随后用户再次选中同一文本时 text !== lastFiredText，等同首次选中，走
+    // 「新文本触发」流程正常查词/翻译。覆盖点空白关闭（onBlankClick）与
+    // 失焦关闭（onLostFocus）两条路径，统一从根源修。
+    // 候选/pending 状态保持，不影响新一轮 tick 的候选检测。
+    notifyCardClosed: function () {
+      lastFiredText = "";
+      lastFiredNoteId = "";
+      lastFiredAt = 0;
+      blankClosed = false;
     }
   };
 })();

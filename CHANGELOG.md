@@ -1,12 +1,32 @@
 # 更新日志
 
-## v0.7.6（2026-08-15）
+## v0.7.6（2026-08-17）
 
 ### 修复
 
-- **卡片正文 markdown 水平线排版**：`---` 分隔线前后无空行时会被渲染成 `## ---` 二级标题（导致音标/释义等小节字体变大、排版错乱）。新增 `normalizeCardBody`：保存卡片前自动在 `---` 上下补空行（已带空行不重复），查词 / AI 解释 / 翻译三种模式的卡片统一生效。
-- **AI 解释卡片回退保护**：查词服务为「AI 解释」时跳过摘录回退重试——摘录正文本身就是 AI 解释输出，再跑一次 AI 解释无意义且易触发重复请求。
+- **脑图模式下卡片「图钉」失效**：图钉的 `pinned` 检查原本只存在于 `onLostFocus`（blur）路径，而脑图模式下点击空白走的是选区监听的 `onBlankClick` 路径（直接 `FloatingCard.hide()`，无 pinned 检查）→ 打开图钉点击脑图空白仍关闭卡片。修复：`FloatingCardController` 新增 `isPinned()` 查询；`SelectionMonitor` 在「点击空白关闭」两处判定（选区清空 / 同 noteId 残留）加入 `!isCardPinned()` 条件，pinned 时走 `onClear`（仅收起悬浮按钮）而不关闭卡片，且不置 `blankClosed`（取消固定后再次点空白可正常关闭）；`MNInstantAITranslatorAddon` 注入 `isCardPinned` 回调桥接。文档模式 blur 路径保持原 pinned 检查。
+- **查词卡片抽搐（重新触发同文本死循环）**：上一轮把 `MNIATSelectionMonitor.notifyCardClosed` 放在 `TranslateFlow.cancelCurrent` 里调用，但 `handleSelection` 第一行也是 `cancelCurrent`（用于取消上一次查词/翻译的 session），结果每次触发查词都清空 `lastFiredText`，下一轮 tick 读到同一 `selectionText` 因 `text !== lastFiredText` 重新触发，形成"选中→触发→cancel→清空→再触发"死循环（卡片抽搐）。改为把 `notifyCardClosed` 移到 `FloatingCardController.hide`（所有关闭路径 onBlankClick / onLostFocus / closeCard bridge / notebookWillClose 都走 hide），从 `TranslateFlow.cancelCurrent` 移除——只在卡片真正关闭时清空 `lastFiredText`。
+- **拖拽排序到末尾位置失效**（同上一轮，新增）：拖到末尾之后时无行可挂 `drop-before` 类，蓝色定位条无家可归。改为独立 `.drop-indicator` 元素（绝对定位）由 `useDragSort` 暴露的 `indicatorTop`（相对 `listEl` 顶部偏移）实时定位，覆盖任意插入位置（含末尾之后）。`moveItem` 不动（splice 已正确处理 `to=rows.length`）。
+- **拖拽过程中出现蓝色文本选区覆盖**：`useDragSort.startDrag` 增加 `window.getSelection().removeAllRanges()` 清除 mousedown 残留选区；CSS 加 `.drag-list / .drag-handle` 的 `user-select: none` + `-webkit-user-drag: none` + `-webkit-tap-highlight-color: transparent`，关闭 macOS 系统拖拽半透明矩形与文本选区高亮。
+- **关闭卡片后再次选中同一单词无法触发查词**（含失焦关闭路径）：上一轮试图在选区监听 tick 内用 `blankClosed` / `menuJustShown` 判定同文本是否重新触发，但**失焦关闭（onLostFocus）路径不经过 monitor**，且菜单与 `selectionText` 持续显示，导致 `menuJustShown=false`、`blankClosed=false`，仍走「重复忽略」分支。改为从根源修：新增 `MNIATSelectionMonitor.notifyCardClosed()`，由 `FloatingCardController.hide`（所有关闭路径都走）在卡片关闭时统一调用清空 `lastFiredText` / `lastFiredNoteId` / `lastFiredAt` / `blankClosed`；再次选中同一文本时 `text !== lastFiredText`，等同首次选中，正常触发查词/翻译。覆盖点空白（onBlankClick）与失焦（onLostFocus）两条关闭路径。
+- **卡片正文 markdown 水平线排版**（2026-08-15）：`---` 分隔线前后无空行时会被渲染成 `## ---` 二级标题（导致音标/释义等小节字体变大、排版错乱）。新增 `normalizeCardBody`：保存卡片前自动在 `---` 上下补空行（已带空行不重复），查词 / AI 解释 / 翻译三种模式的卡片统一生效。
+- **AI 解释卡片回退保护**（2026-08-15）：查词服务为「AI 解释」时跳过摘录回退重试——摘录正文本身就是 AI 解释输出，再跑一次 AI 解释无意义且易触发重复请求。
 - 移除「自动删除正文首行重复标题」逻辑（保留 AI 返回的完整原始内容）。
+
+### 新功能
+
+- **设置页「服务提供商」手动排序（bar 图标拖拽）**：
+  - 每个提供商卡片与每个模型行前新增 bar 图标（与结果卡片工具栏最左侧三横线图标同款），拖动可调整顺序：AI 提供商、各提供商内模型、机器翻译服务均可独立排序。
+  - 顺序持久化到配置（`config.providers` / `providers.<id>.models` / `config.machineProviders`）；长按「重新生成」的模型列表渲染同一份数据，顺序与手动排序自动一致。
+  - 拖拽基于 mouse 事件实现（兼容 UIWebView 老内核）：拖动中显示插入位置横线，松开鼠标一次性保存。
+- **AI 服务提供商「添加」入口移至列表底部**：原顶部"从预设添加 + 添加提供商"下拉与按钮移到所有已添加 provider 卡片之后，便于在已有列表下方继续追加。
+- **机器翻译服务商支持折叠 ID/KEY**：服务名称前加与 AI provider 同款 ▶ 折叠按钮，默认折叠 SecretId / SecretKey / AccessKey 等敏感字段；点击 ▶ 展开。
+- **查词卡片音标与释义之间加分隔线**：保存查词卡片时，`buildDictBody` 在音标部分与释义部分之间插入 `---`（上下各空一行），分隔线规范化由 `normalizeCardBody` 兜底。仅两部分都存在时插入。
+
+### 体验优化
+
+- **AI 服务提供商卡片折叠态紧凑化**：折叠时（仅显示 head）卡片从原 ~90px 压到 ~50px 高——`.provider-card` padding 由 `14` 减到 `10/12`，`.provider-head` 折叠态 margin-bottom 归零（仅展开时给 body 留空隙），head 内元素统一 `gap: 6px`，删除按钮 `margin-left: auto` 贴右、name 与 meta 在左，左右对称；机器翻译卡片同步收紧。
+- **删除机器翻译服务卡片绿色 vendor 标签**：移除 `.machine-vendor-tag`（"百度"/"小牛"/"阿里云"/"腾讯云"/"火山"），卡片视觉更简洁。
 
 ## v0.7.5（2026-08-15）
 

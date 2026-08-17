@@ -1035,6 +1035,13 @@ var MNIATFlow = (function () {
         currentJob.session.cancel();
       }
       currentJob = null;
+      // 注意（2026-08-17 修复抽搐）：不在这里通知 SelectionMonitor.notifyCardClosed。
+      // cancelCurrent 在 handleSelection 第一行也会调用（用于取消上一次查词/翻译的
+      // 打字机），如果此时清空 lastFiredText，下一轮 tick 读到同一 selectionText
+      // 会因 text !== lastFiredText 重新触发，形成"选中→触发→cancel→清空→再触发"
+      // 死循环（卡片抽搐）。
+      // notifyCardClosed 改为在 FloatingCardController.hide（所有关闭路径都走它）
+      // 中调用，确保只在"卡片确实被关闭"时清空 lastFiredText。
     },
 
     hasJob: function () {
