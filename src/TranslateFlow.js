@@ -22,6 +22,7 @@
 var MNIATFlow = (function () {
   var currentJob = null; // { mode, text, win, session }
   var lastWin = null;    // 最近一次划词所在窗口（搜索/重新生成等无新划词场景复用）
+  var appendSession = null; // 拼接模式（双击图钉进入）：{ win }；激活时划词 → 追加文本而非翻译
 
   function pushEvent(obj) {
     MNIATFloatingCard.sendEvent(obj);
@@ -867,6 +868,17 @@ var MNIATFlow = (function () {
     // fallback（2026-08-15）：来自卡片选中态的回退文本（标题优先，摘录正文兜底）。
     // 当 primary 报错时由 runAI 自动用 fallback 再发起一次请求。
     handleSelection: function (win, text, anchorRect, fallback) {
+      // 拼接模式（双击图钉进入）：划词 → 追加文本到拼接编辑区，不启动翻译。
+      // 前置判定：不受查词/翻译开关与 triggerMode 影响；卡片已固定，点空白不关闭。
+      if (appendSession) {
+        var t = String(text || "").trim();
+        if (t.length === 0) return;
+        lastWin = win;
+        appendSession.win = win;
+        console.log("[MNIATFlow] append mode: +" + t.slice(0, 40));
+        pushEvent({ type: "appendText", text: t });
+        return;
+      }
       this.cancelCurrent();
 
       var mode = determineMode(text);
@@ -1031,6 +1043,9 @@ var MNIATFlow = (function () {
     },
 
     cancelCurrent: function () {
+      // 任何取消路径（新划词/关闭卡片/切换任务）都退出拼接模式；
+      // 拼接模式下划词走 handleSelection 前置分支，不经过这里，会话不受影响。
+      appendSession = null;
       if (currentJob && currentJob.session) {
         currentJob.session.cancel();
       }
@@ -1046,6 +1061,61 @@ var MNIATFlow = (function () {
 
     hasJob: function () {
       return !!currentJob;
+    },
+
+    // ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ----------
+    // 2026-08-21 新增：PDF 段落跨页时划词只能选中半截（selectionText 单页内），
+    // 双击图钉进入拼接模式：卡片固定，后续划词自动追加到可编辑拼接区，
+    // 用户修正后点「开始翻译」用完整文本走正常翻译/查词流程。
+
+    // 拼接模式激活判定（monitor 划词回调前置调用：跳过查词/翻译开关与 triggerMode）
+    isAppendMode: function () {
+      return !!appendSession;
+    },
+
+    // 进入拼接模式：双击图钉触发。取消当前翻译（卡片保留），以最近选区为拼接起点，
+    // 固定卡片（拼接期间点空白不关闭），通知前端切换到拼接编辑界面。
+    enterAppendMode: function (win) {
+      // 拼接起点：当前任务的文本（卡片显示中必有）；兜底读当前选区
+      var text = "";
+      if (currentJob && currentJob.text) {
+        text = currentJob.text;
+      } else {
+        try {
+          var studyController = Application.sharedInstance().studyController(win);
+          var dc = studyController && studyController.readerController &&
+            studyController.readerController.currentDocumentController;
+          if (dc && dc.selectionText) text = String(dc.selectionText).trim();
+        } catch (e) { /* 忽略 */ }
+      }
+      this.cancelCurrent();
+      appendSession = { win: win };
+      MNIATFloatingCard.setPinned(true); // 拼接期间固定：划词追加时点空白不关闭卡片
+      pushEvent({ type: "appendMode", text: text });
+      console.log("[MNIATFlow] append mode entered, first=\"" + String(text).slice(0, 40) + "\"");
+      return { entered: true, text: text };
+    },
+
+    // 退出拼接模式（未翻译时）：清空会话，前端回到普通卡片态
+    exitAppendMode: function () {
+      appendSession = null;
+      return { exited: true };
+    },
+
+    // 「开始翻译」：用拼接后的完整文本（前端编辑区为准，用户可编辑修正）启动任务。
+    // context 置空：拼接文本跨页，extractContext 在当前页定位不到会误弹「未定位到选区」HUD。
+    startAppendTranslate: function (text) {
+      var t = String(text || "").trim();
+      if (t.length === 0) {
+        throw new Error("拼接内容为空：请先在文档中划词，或直接编辑输入");
+      }
+      var win = (appendSession && appendSession.win) || lastWin;
+      appendSession = null;
+      var mode = determineMode(t);
+      currentJob = { mode: mode, text: t, win: win, session: null, context: "" };
+      console.log("[MNIATFlow] append translate: mode=" + mode + ", len=" + t.length);
+      this.restartJob();
+      return { started: true };
     },
 
     // 供 bridge 命令调用：解析单词发音 URL（工具栏手动发音按钮）

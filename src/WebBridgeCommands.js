@@ -217,6 +217,31 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return { resized: true };
   }
 
+  // ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ----------
+
+  // 双击图钉 → 进入拼接模式：取消当前翻译，以最近选区为拼接起点，固定卡片并切换到拼接界面
+  function enterAppendMode(context) {
+    var win = (context.controller && context.controller.addonWindow) ||
+      (context.addon && context.addon.window);
+    if (!win) {
+      throw new Error("缺少窗口上下文，无法进入拼接模式");
+    }
+    return MNIATFlow.enterAppendMode(win);
+  }
+
+  // 「开始翻译」：payload.text = 前端拼接编辑区的最终文本（用户可编辑修正）
+  function appendTranslate(context, payload) {
+    if (!payload || !payload.text) {
+      throw new Error("缺少拼接文本");
+    }
+    return MNIATFlow.startAppendTranslate(String(payload.text));
+  }
+
+  // 退出拼接模式（前端「退出」按钮 / 再次双击图钉）
+  function exitAppendMode() {
+    return MNIATFlow.exitAppendMode();
+  }
+
   // ---------- 面板 ----------
 
   function closePanel(context, payload) {
@@ -252,6 +277,9 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     getHistory,
     applyHistory,
     resizeCard,
+    enterAppendMode,
+    appendTranslate,
+    exitAppendMode,
     closePanel,
   };
 

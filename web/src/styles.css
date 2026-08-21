@@ -1943,6 +1943,62 @@ html.card-fit .card-body {
   line-height: 1.5;
 }
 
+/* ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ---------- */
+
+/* 拼接面板占满 card-body 全部可用高度：
+   - toolbar 在 card-page 顶部固定（flex-shrink:0）；
+   - panel 内 tip / actions 固定高度（flex-shrink:0）；
+   - textarea flex:1 占中间剩余空间，到 max-height 上限后内部滚动；
+   - 卡片总高度受 CARD_MAX_HEIGHT (600) 钳制 → textarea 停止增长、内容向下滚动显示最下方 */
+.append-panel {
+  display: block;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.append-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.append-textarea {
+  /* JS 显式控制高度（auto-grow 到 max-height 上限后内部滚动）：
+     - 不再用 flex —— 老 UIWebKit + textarea rows 属性会让 flex:1 失效（文本不动，卡片动）；
+     - display:block + 显式 height 跨浏览器一致；
+     - min/max 上下限保证 cards 高度合理范围 */
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 96px;
+  /* max-height = CARD_MAX_HEIGHT(500) - toolbar(42) - tip(30) - actions(32) - gap(16) - card-body padding(24) = 356
+     超出后 textarea 内部滚动，tip/actions 固定不动 */
+  max-height: 356px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+  overflow-y: auto;
+  resize: none;
+}
+
+.append-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.append-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ---------- 配置备份与同步 ---------- */
 
 .sync-block {

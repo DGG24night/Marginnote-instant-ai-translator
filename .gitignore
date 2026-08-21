@@ -4,3 +4,7 @@ dist/
 .DS_Store
 src/web-dist/
 .workbuddy/
+
+# 本地工具目录
+.dsh/
+.pnpm-store/

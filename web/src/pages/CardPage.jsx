@@ -145,6 +145,23 @@ function AddIcon() {
   );
 }
 
+// 拼接模式追加文本的智能连接策略（用户可编辑修正，此处仅为默认拼接规则）：
+//   - 前段以连字符结尾（PDF 跨行断词，如 "inter-"）→ 去连字符直接连接
+//   - 前段以句子终止符结尾 → 换行（视为新句子/段落起点）
+//   - 新段以 CJK 开头 → 直接连接（中文无需空格）
+//   - 其余（英文同一句子续接，如上一页尾 + 下一页头）→ 空格连接
+function smartJoin(prev, piece) {
+  let a = String(prev || "").replace(/\s+$/g, "");
+  const b = String(piece || "").replace(/^\s+|\s+$/g, "");
+  if (!a) return b;
+  if (!b) return a;
+  if (/[‐\-]$/.test(a)) a = a.slice(0, -1);
+  const isCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(b);
+  const ended = isCJK ? /[。！？…]$/.test(a) : /[.?!;:]$/.test(a);
+  if (ended) return a + "\n" + b;
+  return isCJK ? a + b : a + " " + b;
+}
+
 function CardPage() {
   const [state, setState] = useState(initialState);
   const [pinned, setPinned] = useState(false); // 图钉固定：true = 点击卡片外部不自动关闭
@@ -158,6 +175,8 @@ function CardPage() {
   const [historyOpen, setHistoryOpen] = useState(false); // 历史记录浮层
   const [historyItems, setHistoryItems] = useState([]); // 历史条目（getHistory 返回）
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [appendMode, setAppendMode] = useState(false); // 拼接模式（双击图钉）：划词追加原文，编辑后翻译
+  const [appendText, setAppendText] = useState(""); // 拼接编辑区内容（前端为真源，用户可编辑）
   const readySentRef = useRef(false);
   const audioRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -173,6 +192,9 @@ function CardPage() {
   const regenTouchAtRef = useRef(0); // 最近一次触摸时间戳：触摸后的合成 mouse 事件（500ms 窗口内）一律忽略
   const regenTouchCleanupRef = useRef(null); // 按钮卸载时解绑原生 touch 监听
   const cardLimitsRef = useRef(null); // 卡片高度上下限 { min, max }（cardReady 返回，测量钳制用）
+  const pinTimerRef = useRef(null); // 图钉单击/双击判定计时器
+  const prevPinnedRef = useRef(false); // 进入拼接模式前的 pinned 状态：「开始翻译」后据此决定是否恢复
+  const appendTextareaRef = useRef(null); // 拼接编辑区（auto-grow 用）
   const { config, load } = useConfigStore();
 
   // 显示发音提示，几秒后自动消失
@@ -474,6 +496,9 @@ function CardPage() {
         load();
         // 新任务开始：清除上一任务的卡片高度基准，高度从当前内容重新测量增长
         lastHeightRef.current = 0;
+        // 翻译/查词开始：退出拼接界面（「开始翻译」后回到正常结果展示）
+        setAppendMode(false);
+        setAppendText("");
       }
 
       setState((prev) => {
@@ -505,12 +530,31 @@ function CardPage() {
             // 外部指定发音（如 AI 解释返回后朗读单词），仅返回原状态；
             // 实际播放放在 setState 之外的副作用区，避免被 React 调度吞掉
             return prev;
+          case "appendMode":
+            // 进入拼接模式（双击图钉）：清空上一任务的翻译/查词结果，
+            // 只展示拼接编辑区；appendMode 事件由 enterAppendMode 推来，state 切到 idle。
+            return { ...initialState };
+          case "appendText":
+            // 拼接模式划词追加：结果区不变，文本由下方独立 state 处理
+            return prev;
           case "error":
             return { ...prev, status: "error", errorMsg: event.message };
           default:
             return prev;
         }
       });
+
+      // 拼接模式独立状态（不参与结果区状态机）：
+      //   appendMode 事件（双击图钉）→ 切换到拼接编辑界面，固定卡片；
+      //   appendText 事件（划词追加）→ 智能连接进编辑区（可编辑修正）。
+      if (event.type === "appendMode") {
+        setAppendMode(true);
+        setAppendText(event.text || "");
+        setPinned(true);
+      }
+      if (event.type === "appendText") {
+        setAppendText((prevText) => smartJoin(prevText, event.text || ""));
+      }
 
       // 词典结果到达后自动发音（首选口音不可用时依次回退：小写词 → 另一口音）
       if (event.type === "dictResult" && event.data && event.data.pronounce) {
@@ -593,6 +637,7 @@ function CardPage() {
         audioRef.current.pause();
       }
       if (regenTimerRef.current) clearTimeout(regenTimerRef.current);
+      if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
     };
   }, [load, playWithFallback, showHint]);
 
@@ -614,7 +659,26 @@ function CardPage() {
     const hintEl = document.querySelector(".pronounce-hint");
     const hintH = hintEl ? hintEl.offsetHeight : 0;
     let height = 0;
-    if (isText && measureRef.current) {
+    if (appendMode) {
+      // 拼接模式：按「内容自然高度」计算，而不是 panel.offsetHeight。
+      // panel 高度受卡片 maxHeight 钳制（flex 布局），文本越多 textarea 越早进入
+      // 溢出滚动，offsetHeight 不再增长反而随卡片缩小——必须用 textarea.scrollHeight
+      // （完整内容高度，含溢出滚动部分）计算，卡片才能正确跟随内容变大。
+      const panelEl = document.querySelector(".append-panel");
+      const tipEl = panelEl ? panelEl.querySelector(".append-tip") : null;
+      const taEl = panelEl ? panelEl.querySelector(".append-textarea") : null;
+      const actionsEl = panelEl ? panelEl.querySelector(".append-actions") : null;
+      const cardBody = panelEl ? panelEl.parentElement : null;
+      const bodyPad = cardBody
+        ? (parseFloat(getComputedStyle(cardBody).paddingTop) || 0) +
+          (parseFloat(getComputedStyle(cardBody).paddingBottom) || 0)
+        : 24;
+      const tipH = tipEl ? tipEl.offsetHeight : 0;
+      const actionsH = actionsEl ? actionsEl.offsetHeight : 0;
+      const gap = 16; // panel gap 8px × 2（tip / textarea / actions 之间）
+      const taH = taEl ? Math.max(taEl.scrollHeight, taEl.offsetHeight) : 96;
+      height = tipH + taH + actionsH + gap + bodyPad + toolbarH + hintH;
+    } else if (isText && measureRef.current) {
       // .card-measure 自带与 .card-body 一致的 padding，直接量即可
       height = measureRef.current.offsetHeight + toolbarH + hintH;
     } else if (state.status === "dict" && dictRef.current) {
@@ -693,7 +757,29 @@ function CardPage() {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems, isStreaming]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText]);
+
+// 拼接模式：textarea 高度 auto-grow（基于 scrollHeight），到 CSS max-height 上限内部滚动。
+  //   - onChange 触发的内容增长：见 onAppendChange，用 rAF 同步设 height；
+  //   - 非 onChange 触发的内容变化（appendMode 初始文本由插件回传、appendText 划词追加
+  //     由插件推来、不走 onChange）：这里 setTimeout 16ms 等 textarea 内容渲染完再量；
+  //   - scrollTop = scrollHeight：追加文字后强制滚到底，让用户看到刚划词追加的最新内容。
+  const adjustAppendTextarea = useCallback(() => {
+    const ta = appendTextareaRef.current;
+    if (!ta) return;
+    // 先清空再量 scrollHeight，避免上一次显式 height 限制让 scrollHeight 失真
+    ta.style.height = "auto";
+    const maxH = parseFloat(getComputedStyle(ta).maxHeight) || 356;
+    const target = Math.min(ta.scrollHeight, maxH);
+    ta.style.height = target + "px";
+    ta.scrollTop = ta.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (!appendMode) return undefined;
+    const t = setTimeout(adjustAppendTextarea, 16);
+    return () => clearTimeout(t);
+  }, [appendText, appendMode, adjustAppendTextarea]);
 
   // 词典结果 → Markdown 正文（音标/释义分组），「添加卡片」与「复制」共用
   //   includeWord: true 表示首行包含单词（用于复制到剪贴板场景）；
@@ -885,6 +971,88 @@ function CardPage() {
     MNBridge.send("setCardPinned", { pinned: next }).catch(() => {});
   };
 
+  // ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ----------
+  // 单击图钉 = 固定/取消固定（延迟 280ms 判定，避免与双击冲突）；
+  // 双击图钉 = 进入/退出拼接模式（进入时固定卡片）。
+
+  const toggleAppendMode = async () => {
+    if (appendMode) {
+      // 退出拼接模式（未翻译时）：清编辑区，通知插件清会话，
+      // 恢复进入拼接模式前的 pinned 状态（拼接期间只是临时固定）
+      setAppendMode(false);
+      setAppendText("");
+      const wasPinned = !!prevPinnedRef.current;
+      if (!wasPinned) {
+        setPinned(false);
+        MNBridge.send("setCardPinned", { pinned: false }).catch(() => {});
+      }
+      try {
+        await MNBridge.send("exitAppendMode");
+      } catch (e) { /* 插件已兜底 */ }
+      return;
+    }
+    // 进入拼接模式：记录原 pinned 状态（用于「开始翻译」后恢复），
+    // 插件取消当前翻译、固定卡片，并返回最近选区文本作为拼接起点
+    prevPinnedRef.current = pinned;
+    try {
+      const r = await MNBridge.send("enterAppendMode");
+      setAppendMode(true);
+      setAppendText((r && r.text) || "");
+      setPinned(true); // 拼接期间临时固定：划词追加时点空白不关闭卡片
+    } catch (e) { /* 插件已兜底 */ }
+  };
+
+  const onPinClick = () => {
+    if (pinTimerRef.current) {
+      // 第二次点击在 280ms 内：判定为双击，由 onPinDoubleClick 处理，这里取消单击
+      clearTimeout(pinTimerRef.current);
+      pinTimerRef.current = null;
+      return;
+    }
+    pinTimerRef.current = setTimeout(() => {
+      pinTimerRef.current = null;
+      togglePin();
+    }, 280);
+  };
+
+  const onPinDoubleClick = (e) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+    if (pinTimerRef.current) {
+      clearTimeout(pinTimerRef.current);
+      pinTimerRef.current = null;
+    }
+    toggleAppendMode();
+  };
+
+// 拼接编辑区输入：实时 setAppendText + requestAnimationFrame 同步调高度，
+  //   避免 useEffect 异步延迟导致 textarea 高度落后于输入（闪一下再变高）。
+const onAppendChange = (e) => {
+  setAppendText(e.target.value);
+  requestAnimationFrame(adjustAppendTextarea);
+};
+
+  // 「开始翻译」：把编辑后的拼接文本交给插件走正常翻译/查词流程
+  const startAppendTranslate = async () => {
+    const t = (appendText || "").trim();
+    if (!t) return;
+    try {
+      await MNBridge.send("appendTranslate", { text: appendText });
+      // 翻译开始：恢复原 pinned 状态。
+      //   - 进入拼接前已固定 → 翻译后保持固定（用户主动选择固定）
+      //   - 进入拼接前未固定 → 翻译后取消固定，方便翻译结束后点空白关闭卡片
+      if (!prevPinnedRef.current) {
+        setPinned(false);
+        MNBridge.send("setCardPinned", { pinned: false }).catch(() => {});
+      }
+      // 插件推送 reset/loading 后，事件处理里会自动退出拼接界面
+    } catch (e) { /* 插件已兜底 */ }
+  };
+
+  const clearAppend = () => {
+    setAppendText("");
+    requestAnimationFrame(adjustAppendTextarea);
+  };
+
   const switchToAI = () => {
     MNBridge.send("explainWithAI").catch(() => {});
   };
@@ -1030,8 +1198,13 @@ function CardPage() {
             </button>
             <button
               className={"icon-btn pin-btn" + (pinned ? " active" : "")}
-              title={pinned ? "已固定：点击卡片外部不会关闭（点击取消固定）" : "固定卡片：点击卡片外部不再自动关闭"}
-              onClick={togglePin}
+              title={appendMode
+                ? "拼接模式：继续划词追加，编辑后点「开始翻译」（双击退出拼接）"
+                : (pinned
+                  ? "已固定：点击取消固定；双击进入拼接模式"
+                  : "固定卡片（点击）；双击进入拼接模式（跨页段落拼接翻译）")}
+              onClick={onPinClick}
+              onDoubleClick={onPinDoubleClick}
             >
               <PinIcon />
             </button>
@@ -1044,6 +1217,28 @@ function CardPage() {
       )}
 
       <div className="card-body" onDoubleClick={copyResult} title="双击复制结果">
+        {appendMode && (
+          <div className="append-panel" onDoubleClick={(e) => e.stopPropagation()}>
+            <div className="append-tip">
+              拼接模式：继续在文档中划词自动追加；可编辑修正后点「开始翻译」
+            </div>
+            <textarea
+              ref={appendTextareaRef}
+              className="append-textarea"
+              value={appendText}
+              onChange={onAppendChange}
+              placeholder="在此编辑拼接的原文…"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+            <div className="append-actions">
+              <button className="btn btn-sm" onClick={clearAppend}>清空</button>
+              <button className="btn btn-sm" onClick={startAppendTranslate}>开始翻译</button>
+              <button className="btn btn-sm" onClick={() => toggleAppendMode()}>退出</button>
+            </div>
+          </div>
+        )}
         {state.status === "loading" && (
           <div className="card-loading">
             <span className="spinner" />

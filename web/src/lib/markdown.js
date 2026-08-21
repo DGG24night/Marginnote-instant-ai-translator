@@ -368,10 +368,12 @@ function parseExpr(s, pos, stopSet) {
             out += `<span class="math-fn">${cmd}</span>`;
             continue;
           }
-          // 未知命令保留原文（含 {参数}），避免信息丢失
+          // 未知命令保留原文（含 {参数}），避免信息丢失。
+          // 安全：花括号内容必须转义——公式源文本已由 deentity 还原为原始字符，
+          // 原样拼接会把 <script> 等标签直接注入 HTML（XSS）
           out += "\\" + cmd;
           if (i < n && s[i] === "{") {
-            out += "{" + readBrace() + "}";
+            out += "{" + escapeHTML(readBrace()) + "}";
           }
           continue;
         }

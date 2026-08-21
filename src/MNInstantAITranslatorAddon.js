@@ -41,6 +41,11 @@ function createMNInstantAITranslatorAddon(mainPath) {
       MNIATFloatingCard.setAddon(self);
       MNIATSelectionMonitor.start(win, {
         onSelection: function (text, anchorRect, fallback) {
+          // 拼接模式（双击图钉进入）：划词直接追加到拼接区，不受查词/翻译开关与 triggerMode 限制
+          if (MNIATFlow.isAppendMode()) {
+            MNIATFlow.handleSelection(win, text, anchorRect, fallback);
+            return;
+          }
           var config = MNIATSettings.load();
           // 独立开关：查词/翻译分别控制；两者都关闭时不响应划词（旧版总开关 enabled 已并入这两个开关）
           if (config.lookupEnabled === false && config.translateEnabled === false) return;

@@ -3,10 +3,9 @@
 //   「流式输出」= 非流式请求 + 打字机模拟：fetch 一次性拿完整结果，
 //   插件侧 NSTimer 分批推送 delta，前端逐字显示（打字机效果）。
 //   为何不用真流式：NSURLConnection delegate 流式在本环境两次实测不可用——
-//   2026-08-06 回调零触发（已移除）；2026-08-09 重建后开启即主线程卡死
-//   （mac 彩虹转盘），且主线程卡死后看门狗 NSTimer 无法触发，降级形同虚设。
-//   故 delegate 真流式从默认路径移除，StreamChannel.js 保留为实验通道（未接入），
-//   待环境确认支持后再启用。
+//   2026-08-06 回调零触发；2026-08-09 重建后开启即主线程卡死（mac 彩虹转盘），
+//   且主线程卡死后看门狗 NSTimer 无法触发，降级形同虚设。
+//   故 delegate 真流式已整体移除（原实验通道 StreamChannel.js 一并清理）。
 // 开关：config.streamMode（默认 true）。false = 一次性完整显示（无打字效果）。
 
 var MNIAIService = (function () {
