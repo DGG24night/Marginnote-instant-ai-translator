@@ -23,6 +23,59 @@ var MNIATYoudao = (function () {
       encodeURIComponent(word) + "&lang=en";
   }
 
+  // /m/result 页面仅对英文词返回 dict-module 词条；查询中文时页面无词条（word-title/
+  // simple dict-module 均缺失），无法解析出对应的英文单词。此时改走有道 suggest 接口，
+  // 它支持中文查词并返回对应的英文释义（实测：q=苹果 → explain "apple"），
+  // 与其他查词服务（必应/海词/金山）查中文返回英文单词的行为保持一致。
+  function suggestURL(word) {
+    return "https://dict.youdao.com/suggest?num=5&ver=3.0&doctype=json&cache=false&le=eng&q=" +
+      encodeURIComponent(word);
+  }
+
+  // 是否为中文（含 CJK 统一表意文字）
+  function isChinese(word) {
+    return /[\u4e00-\u9fff]/.test(String(word || ""));
+  }
+
+  // 中文 → 英文查词：suggest 接口返回 data.entries([{ explain(英文译义), entry(词条) }])
+  function lookupChinese(word) {
+    return MNNetwork.fetch(suggestURL(word), {
+      method: "GET",
+      timeout: 12,
+      headers: {
+        "Referer": "https://dict.youdao.com/",
+        "Accept-Language": "zh-CN,zh;q=0.9"
+      }
+    }).then(function (res) {
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error("有道接口 HTTP " + res.status);
+      }
+      var obj = res.json();
+      var entries = obj && obj.data && obj.data.entries;
+      if (!Array.isArray(entries) || entries.length === 0) {
+        throw new Error("未找到该单词的释义");
+      }
+      // 词头保留为中文输入（与必应/海词一致），英文释义作为唯一释义
+      var result = {
+        word: word,
+        ukphone: "",
+        usphone: "",
+        translations: []
+      };
+      for (var i = 0; i < entries.length; i++) {
+        var meaning = cleanJunk(decodeEntities(stripTags(String(entries[i].explain || "")))).trim();
+        if (meaning) {
+          result.translations.push({ pos: "", meaning: meaning });
+          break; // 首条即为查询词的直接英文译义
+        }
+      }
+      if (result.translations.length === 0) {
+        throw new Error("未找到该单词的释义");
+      }
+      return result;
+    });
+  }
+
   function pronounceURL(word, accent) {
     // accent: "uk" -> type=1, "us" -> type=2
     var type = accent === "uk" ? 1 : 2;
@@ -158,6 +211,10 @@ var MNIATYoudao = (function () {
 
     // 返回 Promise<result>，result 结构见 parseResult
     lookup: function (word) {
+      // 中文输入：/m/result 无词条，改走 suggest 接口返回对应英文
+      if (isChinese(word)) {
+        return lookupChinese(word);
+      }
       return MNNetwork.fetch(lookupURL(word), {
         method: "GET",
         timeout: 12,

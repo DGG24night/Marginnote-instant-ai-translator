@@ -14,9 +14,9 @@
 //   - 结果缓存（MNIATCache）：查词缓存（含 AI 解释）与 AI 翻译缓存相互独立；
 //     查词键含服务商前缀（不同查词服务查同一单词不互用缓存），翻译键含提供商+模型；
 //     容量由配置 lookupCacheSize / translateCacheSize 控制（0=不使用缓存）。
-//   - 「重新生成」（regenerate）：点击重跑当前 AI 任务并跳过缓存（bypassCache）；
-//     长按选模型通过 override 临时覆盖提供商/模型（不写回默认路由配置）。
-//   - 工具栏搜索（searchWord）：用默认查词服务查询任意单词。
+//   - 「重新生成」（regenerate）：点击重跑当前 AI 任务并跳过缓存读取（bypassCache，
+//     新结果仍写入缓存覆盖旧值）；长按选模型通过 override 临时覆盖提供商/模型（不写回默认路由配置）。
+//   - 工具栏搜索（searchWord）：用默认查词服务查询任意单词（跳过读取仍写入，进入查词历史）。
 //   - 工具栏查词服务切换（lookupWithProvider）：临时切换查词服务/AI 解释对比结果，不落配置。
 
 var MNIATFlow = (function () {
@@ -618,12 +618,11 @@ var MNIATFlow = (function () {
       if (currentJob !== job) return; // 已被新任务取代
       var out = (result && result.text) ? String(result.text) : "";
       if (out.trim().length > 0) {
-        if (!opts.bypassCache) {
-          MNIATCache.put("translate", cacheKey, {
-            text: out,
-            meta: { kind: "translate", provider: provider.id, sourceText: text }
-          });
-        }
+        // 一律写入缓存：bypassCache 仅跳过读取，写入仍发生，供翻译历史记录展示。
+        MNIATCache.put("translate", cacheKey, {
+          text: out,
+          meta: { kind: "translate", provider: provider.id, sourceText: text }
+        });
         // 打字机效果：与 AI 翻译同一 delta 通道逐字输出，播完再推完成事件。
         // job.session 挂载打字机句柄：新任务/重新生成时 cancelCurrent/regenerate 会取消计时器。
         if (cfg.streamMode !== false) {
@@ -666,8 +665,9 @@ var MNIATFlow = (function () {
   //   - 缓存 key 始终用小写，避免 "Hard" 与 "hard" 命中两份独立但语义不同的缓存。
   //
   // bypassCache（2026-08-12 用户反馈）：
-  //   搜索框（searchWord）查询时设 true —— 跳过读写缓存，强制走网络。
-  //   解决"搜索 hard 时仍返回之前 Hard 的姓氏缓存"问题（同一 cacheKey 命中）。
+  //   搜索框（searchWord）查询时设 true —— 跳过缓存读取，强制走网络。
+  //   解决"搜索 hard 时仍返回之前 Hard 的姓氏缓存"问题（同一 cacheKey 命中）；
+  //   写入不受影响（新结果覆盖旧缓存值，搜索词因此进入查词历史）。
   function runLookup(job, provider) {
     pushEvent({ type: "loading", mode: "lookup", text: job.text });
     var rawWord = String(job.text).trim();
@@ -697,13 +697,13 @@ var MNIATFlow = (function () {
 
     lookupPromise.then(function (result) {
       if (currentJob !== job) return; // 已被新任务取代
-      if (!bypassCache) {
-        // meta 记录来源与单词（用户输入原样），供历史记录展示（不同查词服务独立标签）
-        MNIATCache.put("lookup", cacheKey, {
-          data: result,
-          meta: { kind: "dict", provider: provider, sourceText: rawWord }
-        });
-      }
+      // 一律写入缓存：bypassCache 仅跳过读取（避免命中旧缓存），写入仍发生，
+      // 覆盖旧值并进入历史记录 → 搜索框查到的词也能出现在查词历史里。
+      // meta 记录来源与单词（用户输入原样），供历史记录展示（不同查词服务独立标签）
+      MNIATCache.put("lookup", cacheKey, {
+        data: result,
+        meta: { kind: "dict", provider: provider, sourceText: rawWord }
+      });
       finishLookup(job, provider, result);
     }).catch(function (err) {
       if (currentJob !== job) return;
@@ -965,8 +965,9 @@ var MNIATFlow = (function () {
     },
 
     // 工具栏搜索框查询任意单词：使用默认查词服务提供商（config.lookupProvider）。
-    // bypassCache=true（2026-08-12）：搜索不读也不写缓存，避免大小写版本命中已有
-    // 错误缓存（如曾划词查 "Hard" 拿到姓氏结果，再搜索 "hard" 会被同 cacheKey 命中）。
+    // bypassCache=true（2026-08-12）：搜索跳过缓存读取，避免大小写版本命中已有错误缓存
+    // （如曾划词查 "Hard" 拿到姓氏结果，再搜索 "hard" 会被同 cacheKey 命中）；
+    // 写入不受影响，新结果覆盖旧缓存值，搜索词由此进入查词历史。
     searchWord: function (text) {
       var trimmed = String(text || "").trim();
       if (!trimmed) throw new Error("查询内容为空");

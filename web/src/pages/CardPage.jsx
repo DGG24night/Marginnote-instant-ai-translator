@@ -3,6 +3,34 @@ import MNBridge from "../lib/mnBridge";
 import { renderMarkdown } from "../lib/markdown";
 import { useConfigStore } from "../store/configStore";
 
+// 滚动条自动隐藏：页面静止时滚动条透明（见 styles.css 的 ::-webkit-scrollbar 覆写），
+// 仅在滚动进行中给滚动容器加 .mniat-scroll-visible 短暂显示，停止滚动 600ms 后隐藏。
+// 用 capture 捕获 document 上的 scroll（scroll 不冒泡），一个监听覆盖卡片内所有滚动容器
+// （card-body / 拼接 textarea / 历史列表 / 模型选择器等）。
+function bindScrollHint() {
+  let timer = null;
+  const hide = () => {
+    const nodes = document.querySelectorAll(".mniat-scroll-visible");
+    for (let i = 0; i < nodes.length; i++) nodes[i].classList.remove("mniat-scroll-visible");
+  };
+  const show = (el) => {
+    if (!el || !el.classList) el = document.documentElement;
+    if (!el || !el.classList) return;
+    el.classList.add("mniat-scroll-visible");
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(hide, 600);
+  };
+  const onScroll = (e) => show(e.target);
+  const onWinScroll = () => show(document.documentElement);
+  document.addEventListener("scroll", onScroll, true);
+  window.addEventListener("scroll", onWinScroll);
+  return () => {
+    document.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("scroll", onWinScroll);
+    if (timer) clearTimeout(timer);
+  };
+}
+
 // 卡片状态机：
 //   idle → loading →(delta*)→ done（翻译/解释）
 //                → dict（词典结果）
@@ -480,6 +508,7 @@ function CardPage() {
   useEffect(() => {
     // 卡片模式：高度由内容决定（配合 styles.css 的 html.card-fit）
     document.documentElement.classList.add("card-fit");
+    const scrollHintCleanup = bindScrollHint(); // 结果卡片滚动条：静止自动隐藏、滚动时显示
 
     // 接收插件事件
     window.__MNIATCardEvent = (raw) => {
@@ -629,6 +658,7 @@ function CardPage() {
 
     return () => {
       document.documentElement.classList.remove("card-fit");
+      if (typeof scrollHintCleanup === "function") scrollHintCleanup();
       window.__MNIATCardEvent = null;
       window.__MNIATCardOpenSwitch = null;
       window.removeEventListener("blur", onWindowBlur);
@@ -1079,7 +1109,7 @@ const onAppendChange = (e) => {
   ];
 
   return (
-    <div className="card-page">
+    <div className={"card-page" + (state.status === "dict" ? " dict-mode" : "")}>
       <div className="card-toolbar" ref={toolbarRef}>
         <span className="card-mode">
           <button

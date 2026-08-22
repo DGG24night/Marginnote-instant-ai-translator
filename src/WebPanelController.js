@@ -365,6 +365,10 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     controller.webView.scalesPageToFit = true;
     controller.webView.autoresizingMask = (1 << 1 | 1 << 4);
     controller.webView.delegate = controller;
+    // 关闭 WebView 原生滚动指示器：macOS 上原生文档滚动条 CSS 无法隐藏，
+    // 直接关掉 UIScrollView 的指示器（内层 HTML 元素滚动条仍归 CSS 控制）
+    controller.webView.scrollView.showsVerticalScrollIndicator = false;
+    controller.webView.scrollView.showsHorizontalScrollIndicator = false;
     controller.containerView.addSubview(controller.webView);
 
     const resizeSize = 40;

@@ -204,6 +204,10 @@ var MNIATFloatingCard = (function () {
       self._webView = new UIWebView({ x: 0, y: 0, width: CARD_WIDTH, height: CARD_HEIGHT });
       self._webView.backgroundColor = UIColor.whiteColor();
       self._webView.delegate = self;
+      // 关闭 WebView 原生滚动指示器：macOS 上原生文档滚动条 CSS 无法隐藏，
+      // 直接关掉 UIScrollView 的指示器（内层 HTML 元素滚动条仍归 CSS 控制）
+      self._webView.scrollView.showsVerticalScrollIndicator = false;
+      self._webView.scrollView.showsHorizontalScrollIndicator = false;
       self._container.addSubview(self._webView);
 
       // 原生拖动条：透明，覆盖 web toolbar 左侧区域（避开右侧按钮），
@@ -233,9 +237,11 @@ var MNIATFloatingCard = (function () {
       });
       self._resizeHandle.backgroundColor = UIColor.clearColor();
       self._resizeHandle.userInteractionEnabled = true;
-      var resizeIcon = new UILabel({ x: 10, y: 10, width: 20, height: 20 });
+      // 缩放箭头紧贴卡片右下角（缩小内边距，让图标更靠近角落），
+      // 让出右下角内部区域，避免遮挡内容区底部右侧的操作按钮（如拼接模式的「退出」）
+      var resizeIcon = new UILabel({ x: 18, y: 18, width: 18, height: 18 });
       resizeIcon.text = "↘";
-      resizeIcon.font = UIFont.systemFontOfSize(14);
+      resizeIcon.font = UIFont.systemFontOfSize(12);
       resizeIcon.textColor = UIColor.grayColor();
       resizeIcon.alpha = 0.45;
       self._resizeHandle.addSubview(resizeIcon);

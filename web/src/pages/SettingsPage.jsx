@@ -2,6 +2,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import MNBridge from "../lib/mnBridge";
 import { PROVIDER_PRESETS, MACHINE_PROVIDER_PRESETS, useConfigStore } from "../store/configStore";
 
+// 滚动条自动隐藏：页面静止时滚动条透明（见 styles.css 的 ::-webkit-scrollbar 覆写），
+// 仅在滚动进行中给滚动容器加 .mniat-scroll-visible 短暂显示，停止滚动 600ms 后隐藏。
+function bindScrollHint() {
+  let timer = null;
+  const hide = () => {
+    const nodes = document.querySelectorAll(".mniat-scroll-visible");
+    for (let i = 0; i < nodes.length; i++) nodes[i].classList.remove("mniat-scroll-visible");
+  };
+  const show = (el) => {
+    if (!el || !el.classList) el = document.documentElement;
+    if (!el || !el.classList) return;
+    el.classList.add("mniat-scroll-visible");
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(hide, 600);
+  };
+  const onScroll = (e) => show(e.target);
+  const onWinScroll = () => show(document.documentElement);
+  document.addEventListener("scroll", onScroll, true);
+  window.addEventListener("scroll", onWinScroll);
+  return () => {
+    document.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("scroll", onWinScroll);
+    if (timer) clearTimeout(timer);
+  };
+}
+
 const TARGET_LANGS = [
   { value: "zh-CN", label: "简体中文" },
   { value: "zh-TW", label: "繁体中文" },
@@ -377,6 +403,9 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
   const [selectedModels, setSelectedModels] = useState({});
   const [modelQuery, setModelQuery] = useState("");
   const confirmTimerRef = useRef(null);
+  // 取消测试标记：测试中的请求仍在后台跑（网络层无法真正中止），前端据此丢弃结果并复位 UI
+  const cancelTestRef = useRef(false);
+  const cancelBulkRef = useRef(false);
 
   // 模型拖拽排序（每张卡独立实例；顺序与长按「重新生成」的模型列表一致）
   const modelDrag = useDragSort((from, to) => moveItem(`providers.${provider.id}.models`, from, to));
@@ -412,11 +441,13 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
   // 再发一次带思考参数的请求判断模型是否支持推理，结果自动更新「支持推理」标记
   const runTest = async (modelId) => {
     if (!modelId || testing || bulkTesting) return;
+    cancelTestRef.current = false;
     setTesting(true);
     setTestingModel(modelId);
     setTestResult(null);
     try {
       const result = await MNBridge.send("testProvider", { provider, modelId, probeReasoning: true });
+      if (cancelTestRef.current) return; // 已取消：丢弃结果
       setTestResult({ modelId, ...result });
       // 探测到明确结论时，自动更新该模型的「支持推理」标记
       if (result && typeof result.supportsReasoning === "boolean") {
@@ -429,11 +460,21 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
         });
       }
     } catch (error) {
+      if (cancelTestRef.current) return; // 已取消：丢弃错误
       setTestResult({ modelId, ok: false, message: String((error && error.message) || error) });
     } finally {
+      cancelTestRef.current = false;
       setTesting(false);
       setTestingModel(null);
     }
+  };
+
+  // 取消单个模型测试：复位 UI；后台请求继续但结果会被丢弃（见 runTest 里的 cancel 判断）
+  const cancelTest = () => {
+    cancelTestRef.current = true;
+    setTesting(false);
+    setTestingModel(null);
+    setTestResult(null);
   };
 
   // 批量测试：逐个测试该供应商下所有已填 ID 的模型，结果实时写入 bulkResults。
@@ -441,13 +482,16 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
   const runBulkTest = async () => {
     const targets = provider.models.filter((m) => m && String(m.id).trim());
     if (targets.length === 0 || bulkTesting) return;
+    cancelBulkRef.current = false;
     setBulkTesting(true);
     setBulkResults({});
     const detected = {}; // modelId -> supportsReasoning（批量结束后一次保存）
     for (const model of targets) {
+      if (cancelBulkRef.current) break; // 已取消：停止后续模型
       const modelId = String(model.id).trim();
       try {
         const result = await MNBridge.send("testProvider", { provider, modelId, probeReasoning: true });
+        if (cancelBulkRef.current) break; // 已取消：丢弃当前结果并停止
         setBulkResults((prev) => ({
           ...prev,
           [modelId]: {
@@ -461,13 +505,15 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
           detected[modelId] = result.supportsReasoning;
         }
       } catch (error) {
+        if (cancelBulkRef.current) break;
         setBulkResults((prev) => ({
           ...prev,
           [modelId]: { ok: false, message: String((error && error.message) || error), supportsReasoning: null },
         }));
       }
     }
-    // 探测到明确结论时，统一更新标记（一次持久化）
+    cancelBulkRef.current = false;
+    // 若在被取消瞬间仍有探测结果，不再写回；正常完成时才更新标记
     const keys = Object.keys(detected);
     if (keys.length > 0) {
       patch((p) => {
@@ -480,6 +526,13 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
       });
     }
     setBulkTesting(false);
+  };
+
+  // 取消批量测试：复位 UI，并停止测试剩余模型
+  const cancelBulkTest = () => {
+    cancelBulkRef.current = true;
+    setBulkTesting(false);
+    setBulkResults({});
   };
 
   // 获取模型列表：插件侧 GET {baseURL}/models（OpenAI 兼容），再按需勾选添加
@@ -646,12 +699,20 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                     支持推理
                   </label>
                   <button
-                    className="btn btn-sm"
-                    disabled={testing || bulkTesting}
-                    onClick={() => runTest(model.id)}
-                    title="用该模型发送最小请求验证连通性"
+                    className={"btn btn-sm btn-test" + (testing && testingModel === model.id ? " is-testing" : "")}
+                    disabled={(testing && testingModel !== model.id) || bulkTesting}
+                    onClick={() => {
+                      if (testing && testingModel === model.id) cancelTest();
+                      else runTest(model.id);
+                    }}
+                    title={testing && testingModel === model.id ? "点击取消测试" : "用该模型发送最小请求验证连通性"}
                   >
-                    {testing && testingModel === model.id ? "测试中…" : "测试"}
+                    {testing && testingModel === model.id ? (
+                      <span className="btn-test-text">
+                        <span className="btn-test-idle">测试中…</span>
+                        <span className="btn-test-hover">取消测试</span>
+                      </span>
+                    ) : "测试"}
                   </button>
                   <button
                     className="btn btn-sm"
@@ -673,12 +734,17 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                 + 添加模型
               </button>
               <button
-                className="btn btn-sm"
-                onClick={runBulkTest}
-                disabled={bulkTesting || provider.models.filter((m) => m && String(m.id).trim()).length === 0}
-                title="逐个测试该供应商下所有已填 ID 的模型"
+                className={"btn btn-sm" + (bulkTesting ? " btn-test" : "")}
+                onClick={() => { if (bulkTesting) cancelBulkTest(); else runBulkTest(); }}
+                disabled={!bulkTesting && provider.models.filter((m) => m && String(m.id).trim()).length === 0}
+                title={bulkTesting ? "点击取消测试" : "逐个测试该供应商下所有已填 ID 的模型"}
               >
-                {bulkTesting ? "批量测试中…" : "批量测试全部"}
+                {bulkTesting ? (
+                  <span className="btn-test-text">
+                    <span className="btn-test-idle">批量测试中…</span>
+                    <span className="btn-test-hover">取消测试</span>
+                  </span>
+                ) : "批量测试全部"}
               </button>
               <button
                 className="btn btn-sm"
@@ -1289,6 +1355,7 @@ function SettingsPage() {
 
   useEffect(() => {
     load();
+    return bindScrollHint(); // 设置页右侧滚动条：静止自动隐藏、滚动时显示
   }, [load]);
 
   if (!loaded) {

@@ -49,6 +49,27 @@ body {
   font-size: 14px;
 }
 
+/* ---------- 滚动条：静止自动隐藏、仅滚动时显示 ---------- */
+/* macOS WebView 为原生滚动条，不响应 ::-webkit-scrollbar-thumb 的颜色覆写
+   （即使淡化成透明仍常驻显示）。故默认彻底隐藏滚动条（display:none 对 HTML 容器
+   的滚动条有效，对原生根滚动条无效），并掐断根级滚动：把内容放进带 overflow 的
+   容器内滚动，从而让滚动条归 CSS 控制。滚动时由 JS 给容器临时加
+   .mniat-scroll-visible 重新显示；停止滚动 600ms 后移除类，滚动条随之隐藏。 */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+.mniat-scroll-visible::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+.mniat-scroll-visible::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 4px;
+}
+
 /* ---------- 通用控件 ---------- */
 
 .input {
@@ -210,6 +231,11 @@ body {
   max-width: 920px;
   margin: 0 auto;
   padding: 20px 24px 60px;
+  /* 让内容在自身容器内滚动，而非文档根滚动：
+     根的滚动条由 WebView 原生绘制、CSS 无法隐藏；容器内滚动条归 CSS 控制，
+     配合全局滚动条规则实现「静止隐藏、滚动时显示」 */
+  height: 100%;
+  overflow-y: auto;
 }
 
 /* 顶部等宽标签导航（宽屏完整文案，窄屏缩写） */
@@ -712,6 +738,18 @@ body.drag-sorting {
   margin-right: 0;
 }
 
+/* 测试按钮：默认显示「测试中…」，hover 时切换为「取消测试」（点击即取消）。
+   .btn-test 仅在某次测试进行中挂到对应按钮上；非测试按钮仍显示原文案 */
+.btn-test .btn-test-hover {
+  display: none;
+}
+.btn-test:hover .btn-test-idle {
+  display: none;
+}
+.btn-test:hover .btn-test-hover {
+  display: inline;
+}
+
 .model-test-result {
   margin-top: 6px;
   font-size: 13px;
@@ -906,6 +944,12 @@ html.card-fit .card-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* 查词结果：彻底隐藏滚动条（本 WebView 忽略 ::-webkit-scrollbar 隐藏样式，
+   故直接收起纵向滚动，保证不出现滚动条；卡片高度已随查词内容自适应） */
+.card-page.dict-mode .card-body {
+  overflow-y: hidden;
 }
 
 .card-page {
@@ -1997,6 +2041,8 @@ html.card-fit .card-body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  /* 右下角原生缩放箭头（↘）会让位：右侧留出空隙，避免遮挡最右侧的「退出」按钮 */
+  padding-right: 18px;
 }
 
 /* ---------- 配置备份与同步 ---------- */
