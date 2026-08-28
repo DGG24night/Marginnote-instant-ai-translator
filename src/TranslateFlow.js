@@ -23,6 +23,7 @@ var MNIATFlow = (function () {
   var currentJob = null; // { mode, text, win, session }
   var lastWin = null;    // 最近一次划词所在窗口（搜索/重新生成等无新划词场景复用）
   var appendSession = null; // 拼接模式（双击图钉进入）：{ win }；激活时划词 → 追加文本而非翻译
+  var chatSession = null;   // AI 对话会话（长按机器人图标）：{ cancel() }
 
   function pushEvent(obj) {
     MNIATFloatingCard.sendEvent(obj);
@@ -372,11 +373,12 @@ var MNIATFlow = (function () {
 
   // AI 翻译 / AI 解释统一入口：
   //   routingKind: "translate" | "lookup"（路由配置组）
-  //   promptKind: "translate" | "explain"（prompt 模板）
+  //   promptKind: "translate" | "explain" | "robotDouble"（prompt 模板）
   //   opts: { bypassCache, override }
   // 缓存规则：
   //   - 翻译（routingKind=translate）→ AI 翻译缓存，键 = providerId:modelId:text
   //   - AI 解释（promptKind=explain）→ 查词缓存，键 = ai:providerId:modelId:word
+  //   - 机器人双击（robotDouble）→ 不读写缓存
   //   - 重新生成（bypassCache=true）跳过读取；新结果仍写入缓存覆盖旧值
   function runAI(job, routingKind, promptKind, opts) {
     opts = opts || {};
@@ -386,7 +388,8 @@ var MNIATFlow = (function () {
 
     var cacheKind = null;
     var cacheKey = "";
-    if (provider && route.modelId) {
+    var cacheable = promptKind === "explain" || promptKind === "translate";
+    if (provider && route.modelId && cacheable) {
       // 缓存键纳入上下文摘要：prompt 含 {context} 时，同一文本不同上下文结果不同，
       // 不区分会导致缓存互串（cXXX 段；上下文为空时不加段，兼容旧缓存仍可命中）
       var ck = contextKey(job.context);
@@ -1004,6 +1007,73 @@ var MNIATFlow = (function () {
       return { switched: true };
     },
 
+    // 机器人图标：单击 / 双击触发对应自定义 prompt（设置「Prompt 模板」中可改）。
+    // 文本 = 当前任务文本；路由 = AI 解释（lookup）路由；结果走 delta/translateResult
+    // 通道由前端打字机渲染。
+    // promptKey: "explain"（单击 = AI 解释模板，可缓存）| "robotDouble"（双击，不缓存）
+    robotPrompt: function (promptKey) {
+      if (promptKey !== "explain" && promptKey !== "robotDouble") {
+        throw new Error("不支持的机器人 prompt: " + promptKey);
+      }
+      if (!currentJob) {
+        throw new Error("当前没有进行中的任务");
+      }
+      if (currentJob.session) {
+        currentJob.session.cancel();
+        currentJob.session = null;
+      }
+      // 标记为 explain 模式：前端显示「重新生成」按钮、发音按钮等按 AI 解释处理
+      currentJob.mode = "explain";
+      pushEvent({ type: "loading", mode: "explain", text: currentJob.text });
+      // 单击（explain）与 AI 解释同模板，允许读写缓存；双击（robotDouble）跳过缓存
+      runAI(currentJob, "lookup", promptKey, promptKey === "explain" ? {} : { bypassCache: true });
+      return { started: true };
+    },
+
+    // AI 对话（长按机器人图标）：messages = [{role:"user"|"assistant", content}] 完整历史，
+    // 前端持有对话状态、每次发送全量历史；插件侧按 chat 路由请求并把回复推回前端
+    // （chatDelta / chatDone / chatError 事件，与结果区 delta/translateResult 通道独立）。
+    // override = {providerId, modelId}：临时覆盖 chat 路由（输入框左侧模型选择 / 重新回答选模型），
+    // 不写回 config.routing.chat。
+    chatSend: function (messages, override) {
+      if (!Array.isArray(messages) || messages.length === 0) {
+        throw new Error("缺少对话消息");
+      }
+      if (chatSession) {
+        try { chatSession.cancel(); } catch (e) { /* 忽略 */ }
+        chatSession = null;
+      }
+      var ov = (override && override.providerId)
+        ? { providerId: String(override.providerId), modelId: String(override.modelId || "") }
+        : null;
+      chatSession = MNIAIService.runMessages("chat", messages, {
+        resolved: ov ? resolveEffectiveRoute("chat", ov) : undefined,
+        onDelta: function (delta, accumulated) {
+          pushEvent({ type: "chatDelta", accumulated: accumulated });
+        },
+        onDone: function (full) {
+          chatSession = null;
+          pushEvent({ type: "chatDone", text: full });
+          // 记录问答历史（最近在前，同问题覆盖）：历史记录按钮在对话界面读取
+          try {
+            var q = "";
+            for (var i = messages.length - 1; i >= 0; i--) {
+              if (messages[i] && messages[i].role === "user") {
+                q = String(messages[i].content || "");
+                break;
+              }
+            }
+            MNIATChatHistory.add(q, full);
+          } catch (e) { /* 历史记录失败不影响对话 */ }
+        },
+        onError: function (message) {
+          chatSession = null;
+          pushEvent({ type: "chatError", message: message });
+        }
+      });
+      return { started: true };
+    },
+
     // 「重新生成」：重跑当前 AI 翻译/解释任务，跳过缓存；
     // override = { providerId, modelId }（AI 提供商，长按选模型时传入，临时覆盖，不写回配置）
     //          | { machineProviderId }（机器翻译服务，长按选模型时传入，临时覆盖，不写回 machineRouting）
@@ -1047,6 +1117,11 @@ var MNIATFlow = (function () {
       // 任何取消路径（新划词/关闭卡片/切换任务）都退出拼接模式；
       // 拼接模式下划词走 handleSelection 前置分支，不经过这里，会话不受影响。
       appendSession = null;
+      // 同步取消进行中的 AI 对话请求（卡片关闭/新任务时不再推送 chat 事件）
+      if (chatSession) {
+        try { chatSession.cancel(); } catch (e) { /* 忽略 */ }
+        chatSession = null;
+      }
       if (currentJob && currentJob.session) {
         currentJob.session.cancel();
       }

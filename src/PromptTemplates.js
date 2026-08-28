@@ -32,6 +32,24 @@ var MNIATPrompts = (function () {
     "**词根词缀分析**\n" +
     "这部分讲解如何通过词根词缀理解单词含义（如果单词过于简短没有词根词缀则可以不需要这部分）";
 
+  // 机器人图标双击 prompt：默认输出单词深度分析。
+  // （单击即「AI 解释」，直接复用 DEFAULT_EXPLAIN，无独立模板）
+  var DEFAULT_ROBOT_DOUBLE =
+    "请严格按以下markdown格式输出单词{text}的深度分析：\n\n" +
+    "# {text}\n" +
+    "---\n" +
+    "**词源与词根词缀**\n" +
+    "讲解单词的词源来历，以及如何通过词根词缀理解其含义（过于简单的词可略过）\n" +
+    "---\n" +
+    "**同义词辨析**\n" +
+    "列出常见的同义词、近义词（不超过5个），并逐一辨析它们与该词在用法与语义上的区别\n" +
+    "---\n" +
+    "**常用搭配**\n" +
+    "给出该词的地道搭配（动词短语、介词搭配等，不超过5个）及其中文含义\n" +
+    "---\n" +
+    "**记忆方法**\n" +
+    "给出便于记忆的联想、口诀或技巧";
+
   function render(template, vars) {
     var out = String(template);
     for (var key in vars) {
@@ -43,17 +61,22 @@ var MNIATPrompts = (function () {
   return {
     defaults: {
       translate: DEFAULT_TRANSLATE,
-      explain: DEFAULT_EXPLAIN
+      explain: DEFAULT_EXPLAIN,
+      robotDouble: DEFAULT_ROBOT_DOUBLE
     },
 
-    // kind: "translate" | "explain"
+    // kind: "translate" | "explain" | "robotDouble"
     // context: 选区上下文（前后文）字符串；未提供或为空时 {context} 渲染为空串
     build: function (kind, text, context) {
       var config = MNIATSettings.load();
       var custom = config.prompts && config.prompts[kind];
+      var fallbacks = {
+        explain: DEFAULT_EXPLAIN,
+        robotDouble: DEFAULT_ROBOT_DOUBLE
+      };
       var template = (custom && custom.trim().length > 0)
         ? custom
-        : (kind === "explain" ? DEFAULT_EXPLAIN : DEFAULT_TRANSLATE);
+        : (fallbacks[kind] || DEFAULT_TRANSLATE);
       return render(template, {
         text: text,
         target_lang: config.targetLang,

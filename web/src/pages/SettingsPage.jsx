@@ -1511,6 +1511,100 @@ function SettingsPage() {
               </label>
             </div>
 
+            {/* ===== 快捷键（结果卡片内，均可自定义） ===== */}
+            <h3 className="subsection-title">
+              快捷键
+              <Hint>
+                结果卡片打开时生效：快速查词 = 聚焦搜索框（Enter 查询）；笔记编辑 = 进入笔记界面；
+                保存笔记 = 笔记界面内保存并创建卡片；上/下一历史 = 切换查词/翻译历史记录。
+                格式：单键（如 d）或组合键（如 alt+s，支持 alt/ctrl/shift/cmd）；
+                历史切换键可填多个，用英文逗号分隔。
+              </Hint>
+            </h3>
+            <div className="route-grid">
+              <Field label="快速查词">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.lookup) || "d"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), lookup: e.target.value }; })
+                  }
+                />
+              </Field>
+              <Field label="笔记编辑">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.note) || "n"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), note: e.target.value }; })
+                  }
+                />
+              </Field>
+              <Field label="保存笔记（默认 Option+S）">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.save) || "alt+s"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), save: e.target.value }; })
+                  }
+                />
+              </Field>
+              <Field label="上一条历史（多个用逗号分隔）">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.historyPrev) || "ArrowUp,ArrowLeft"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), historyPrev: e.target.value }; })
+                  }
+                />
+              </Field>
+              <Field label="下一条历史（多个用逗号分隔）">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.historyNext) || "ArrowDown,ArrowRight"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), historyNext: e.target.value }; })
+                  }
+                />
+              </Field>
+            </div>
+
+            {/* ===== 笔记与机器人 ===== */}
+            <h3 className="subsection-title">笔记与机器人</h3>
+            <div className="checkbox-grid">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.noteIncludeResult !== false}
+                  onChange={(e) => update((c) => { c.noteIncludeResult = e.target.checked; })}
+                />
+                笔记自动附带查词/翻译结果（以 --- 分隔）
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={config.robotChatEnabled !== false}
+                  onChange={(e) => update((c) => { c.robotChatEnabled = e.target.checked; })}
+                />
+                长按机器人图标进入 AI 对话
+              </label>
+            </div>
+
             {/* ===== 查词 ===== */}
             <h3 className="subsection-title">查词</h3>
             <div className="route-grid">
@@ -1797,6 +1891,7 @@ function SettingsPage() {
           <Section title="模型路由">
             <RouteEditor kind="translate" title="翻译（句子/段落）" />
             <RouteEditor kind="lookup" title="AI 解释（单词卡切换）" />
+            <RouteEditor kind="chat" title="AI 对话（长按机器人图标）" />
 
             <div className="route-editor mt-route-editor">
               <h3 className="route-title">机器翻译路由</h3>
@@ -1956,7 +2051,8 @@ function SettingsPage() {
         {activeTab === "prompts" && (
           <Section title="Prompt 模板">
             <PromptEditor promptKey="translate" title="翻译 Prompt" />
-            <PromptEditor promptKey="explain" title="AI 解释 Prompt" />
+            <PromptEditor promptKey="explain" title="AI 解释 Prompt（单击机器人图标）" />
+            <PromptEditor promptKey="robotDouble" title="机器人双击 Prompt" />
           </Section>
         )}
       </div>

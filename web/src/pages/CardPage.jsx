@@ -173,6 +173,22 @@ function AddIcon() {
   );
 }
 
+// 复制（两层圆角矩形，单色 currentColor）：AI 对话回答气泡的操作按钮
+const COPY_PATHS = [
+  "M832 896H320c-35.3 0-64-28.7-64-64V320c0-35.3 28.7-64 64-64h448c35.3 0 64 28.7 64 64v512c0 35.3-28.7 64-64 64z m-512-64h448V320H320v512z",
+  "M704 128H192c-35.3 0-64 28.7-64 64v512c0 17.7 14.3 32 32 32s32-14.3 32-32V192h512c17.7 0 32-14.3 32-32s-14.3-32-32-32z",
+];
+
+function CopyIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {COPY_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
 // 拼接模式追加文本的智能连接策略（用户可编辑修正，此处仅为默认拼接规则）：
 //   - 前段以连字符结尾（PDF 跨行断词，如 "inter-"）→ 去连字符直接连接
 //   - 前段以句子终止符结尾 → 换行（视为新句子/段落起点）
@@ -190,6 +206,53 @@ function smartJoin(prev, piece) {
   return isCJK ? a + b : a + " " + b;
 }
 
+// ---------- 快捷键（结果卡片内，均可在设置中自定义） ----------
+// 配置格式："d" / "alt+s" / "ctrl+shift+p"（修饰键支持 alt/option、ctrl/control、shift、cmd/command/meta）；
+// 历史切换键支持逗号分隔多个键，如 "ArrowUp,ArrowLeft"。
+// 解析为 { main, mods:{alt,ctrl,shift,cmd} }；非法输入返回 null。
+function parseShortcut(str) {
+  const parts = String(str || "").trim().split("+").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length) return null;
+  const main = parts[parts.length - 1];
+  if (!main || main === "alt" || main === "ctrl" || main === "shift" || main === "cmd") return null;
+  const mods = { alt: false, ctrl: false, shift: false, cmd: false };
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (p === "alt" || p === "option" || p === "⌥") mods.alt = true;
+    else if (p === "ctrl" || p === "control") mods.ctrl = true;
+    else if (p === "shift") mods.shift = true;
+    else if (p === "cmd" || p === "command" || p === "meta") mods.cmd = true;
+  }
+  return { main, mods };
+}
+
+// 按键名匹配：macOS 上 Option 组合会改变 e.key（Option+S → "ß"），
+// 字母/数字键额外用 e.code（键位码，不受修饰键影响）匹配。
+function keyNameMatches(e, main) {
+  const k = String(e.key || "").toLowerCase();
+  if (k === main) return true;
+  const code = String(e.code || "").toLowerCase();
+  return code === "key" + main;
+}
+
+function matchShortcut(e, sc) {
+  if (!sc) return false;
+  if (!keyNameMatches(e, sc.main)) return false;
+  return e.altKey === sc.mods.alt &&
+    e.ctrlKey === sc.mods.ctrl &&
+    e.metaKey === sc.mods.cmd &&
+    e.shiftKey === sc.mods.shift;
+}
+
+// 多键匹配（逗号分隔）："ArrowUp,ArrowLeft"
+function matchAnyShortcut(e, listStr) {
+  const parts = String(listStr || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    if (keyNameMatches(e, parts[i])) return true;
+  }
+  return false;
+}
+
 function CardPage() {
   const [state, setState] = useState(initialState);
   const [pinned, setPinned] = useState(false); // 图钉固定：true = 点击卡片外部不自动关闭
@@ -205,6 +268,18 @@ function CardPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [appendMode, setAppendMode] = useState(false); // 拼接模式（双击图钉）：划词追加原文，编辑后翻译
   const [appendText, setAppendText] = useState(""); // 拼接编辑区内容（前端为真源，用户可编辑）
+  const [noteOpen, setNoteOpen] = useState(false); // 笔记编辑界面（N 键 / 双击「添加」按钮进入）
+  const [noteTitle, setNoteTitle] = useState(""); // 笔记标题（默认为单词/原句，可编辑）
+  const [noteText, setNoteText] = useState(""); // 笔记编辑区内容（可含自动附带的查词/翻译结果）
+  const [chatOpen, setChatOpen] = useState(false); // AI 对话界面（长按机器人图标进入）
+  const [chatMessages, setChatMessages] = useState([]); // [{role:"user"|"assistant", text}]
+  const [chatDraft, setChatDraft] = useState(""); // AI 回复流式草稿（chatDelta 累积）
+  const [chatInput, setChatInput] = useState(""); // 对话输入框
+  const [chatSending, setChatSending] = useState(false);
+  const [chatModelOverride, setChatModelOverride] = useState(null); // 对话模型临时覆盖 {providerId, modelId} | null（null = 默认 chat 路由）
+  const [chatPickerOpen, setChatPickerOpen] = useState(false); // 对话模型选择弹层
+  const [chatPickerTarget, setChatPickerTarget] = useState(null); // 弹层用途：null=切换模型 | 数字=重新回答该条回答的索引
+  const [searchFocusTick, setSearchFocusTick] = useState(0); // 搜索框聚焦重试触发器（D 键重复触发聚焦）
   const readySentRef = useRef(false);
   const audioRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -223,6 +298,25 @@ function CardPage() {
   const pinTimerRef = useRef(null); // 图钉单击/双击判定计时器
   const prevPinnedRef = useRef(false); // 进入拼接模式前的 pinned 状态：「开始翻译」后据此决定是否恢复
   const appendTextareaRef = useRef(null); // 拼接编辑区（auto-grow 用）
+  const noteTextareaRef = useRef(null); // 笔记编辑区（auto-grow / 聚焦用）
+  const addTimerRef = useRef(null); // 「添加」按钮单击/双击判定计时器
+  const robotTimerRef = useRef(null); // 机器人单击/双击判定计时器
+  const robotPressTimerRef = useRef(null); // 机器人长按计时器（进入 AI 对话）
+  const robotLongFiredRef = useRef(false); // 机器人长按已触发（抑制随后的 click）
+  const robotTouchAtRef = useRef(0); // 机器人最近触摸时间戳（忽略触摸后的合成 mouse 事件）
+  const robotTouchCleanupRef = useRef(null); // 机器人按钮卸载时解绑原生 touch 监听
+  const chatListRef = useRef(null); // 对话消息列表（滚动到底用）
+  const chatPickerRef = useRef(null); // 对话模型选择弹层（测量高度用）
+  const chatAddTimerRef = useRef(null); // 对话「添加笔记」单击/双击判定计时器
+  const reAnsTimerRef = useRef(null); // 「重新回答」长按计时器
+  const reAnsLongRef = useRef(false); // 「重新回答」长按已触发（抑制随后的 click）
+  const reAnsTouchAtRef = useRef(0); // 「重新回答」最近触摸时间戳（忽略触摸后的合成 mouse 事件）
+  const noteKindRef = useRef(""); // 笔记编辑上下文类型（chat 回答进入编辑时用 lookup 颜色）
+  const histNavListRef = useRef(null); // 快捷键历史导航：已加载的历史列表
+  const histNavKindRef = useRef(""); // 快捷键历史导航：列表对应的类型（lookup/translate）
+  const histNavIdxRef = useRef(-1); // 快捷键历史导航：当前所在索引（-1 = 未开始）
+  const histNavAppliedRef = useRef(""); // 快捷键历史导航：最近应用条目的原文（区分历史回放与新任务）
+  const shortcutsRef = useRef(null); // 最新快捷键处理函数（每次渲染重建，监听器只绑一次）
   const { config, load } = useConfigStore();
 
   // 显示发音提示，几秒后自动消失
@@ -468,14 +562,28 @@ function CardPage() {
     setSearchText("");
   }, []);
 
-  // 展开搜索框后聚焦输入框
+  // 展开搜索框后聚焦输入框（多次重试 + window.focus 兜底）：
+  // UIWebView 中点击按钮展开后 WebView 可能未持有 DOM 焦点，单次 focus 会静默失败，
+  // 表现为「还得手动点一下输入框才能打字」——先 window.focus() 抢回焦点再 focus 输入框，
+  // 未成功则间隔重试（最多 5 次）。
   useEffect(() => {
-    if (searchOpen && searchInputRef.current) {
-      setTimeout(() => {
-        if (searchInputRef.current) searchInputRef.current.focus();
-      }, 50);
-    }
-  }, [searchOpen]);
+    if (!searchOpen) return undefined;
+    let attempts = 0;
+    let timer = null;
+    const focusAttempt = () => {
+      if (!searchInputRef.current) return;
+      try { window.focus(); } catch (err) { /* ignore */ }
+      try { searchInputRef.current.focus(); } catch (err) { /* ignore */ }
+      attempts += 1;
+      if (attempts < 5 && document.activeElement !== searchInputRef.current) {
+        timer = setTimeout(focusAttempt, 120);
+      }
+    };
+    timer = setTimeout(focusAttempt, 50);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [searchOpen, searchFocusTick]);
 
   // ---------- 查词服务切换（bar 图标菜单） ----------
 
@@ -528,6 +636,37 @@ function CardPage() {
         // 翻译/查词开始：退出拼接界面（「开始翻译」后回到正常结果展示）
         setAppendMode(false);
         setAppendText("");
+        // 新任务开始：退出笔记编辑 / AI 对话界面（回到结果展示）
+        setNoteOpen(false);
+        setNoteTitle("");
+        setNoteText("");
+        setChatOpen(false);
+        setChatMessages([]);
+        setChatDraft("");
+        setChatInput("");
+        setChatSending(false);
+        // 快捷键历史导航：回放历史（文本与最近应用条目一致）保持索引，
+        // 新任务（新选区/搜索词）重置为未开始。
+        // 注意：仅依据 loading 事件判断（携带 text）；reset 事件不携带 text，
+        // 且 applyHistory 会先推 reset 再推 loading，若对 reset 也比对会把索引
+        // 误重置回 -1，导致每次按上键都停在第一条（已踩坑）。
+        if (event.type === "loading" &&
+          (!histNavAppliedRef.current || String(event.text || "").trim() !== histNavAppliedRef.current)) {
+          histNavIdxRef.current = -1;
+        }
+      }
+
+      // AI 对话事件（与结果区 delta/translateResult 通道独立，仅在对话界面渲染）
+      if (event.type === "chatDelta") {
+        setChatDraft(event.accumulated || "");
+      } else if (event.type === "chatDone") {
+        setChatDraft("");
+        setChatMessages((prev) => [...prev, { role: "assistant", text: String(event.text || "") }]);
+        setChatSending(false);
+      } else if (event.type === "chatError") {
+        setChatDraft("");
+        setChatSending(false);
+        showHint(`AI 对话失败：${event.message || "请重试"}`);
       }
 
       setState((prev) => {
@@ -668,6 +807,14 @@ function CardPage() {
       }
       if (regenTimerRef.current) clearTimeout(regenTimerRef.current);
       if (pinTimerRef.current) clearTimeout(pinTimerRef.current);
+      if (addTimerRef.current) clearTimeout(addTimerRef.current);
+      if (chatAddTimerRef.current) clearTimeout(chatAddTimerRef.current);
+      if (reAnsTimerRef.current) clearTimeout(reAnsTimerRef.current);
+      clearRobotTimers();
+      if (robotTouchCleanupRef.current) {
+        robotTouchCleanupRef.current();
+        robotTouchCleanupRef.current = null;
+      }
     };
   }, [load, playWithFallback, showHint]);
 
@@ -689,7 +836,31 @@ function CardPage() {
     const hintEl = document.querySelector(".pronounce-hint");
     const hintH = hintEl ? hintEl.offsetHeight : 0;
     let height = 0;
-    if (appendMode) {
+    if (noteOpen) {
+      // 笔记编辑界面：与拼接界面同法（tip + 标题框 + textarea + actions 自然高度 + padding）
+      const panelEl = document.querySelector(".note-panel");
+      const tipEl = panelEl ? panelEl.querySelector(".note-tip") : null;
+      const titleEl = panelEl ? panelEl.querySelector(".note-title-input") : null;
+      const taEl = panelEl ? panelEl.querySelector(".note-textarea") : null;
+      const actionsEl = panelEl ? panelEl.querySelector(".note-actions") : null;
+      const bodyPad = 24; // card-body 上下 padding 12+12
+      const tipH = tipEl ? tipEl.offsetHeight : 0;
+      const titleH = titleEl ? titleEl.offsetHeight : 0;
+      const actionsH = actionsEl ? actionsEl.offsetHeight : 0;
+      const taH = taEl ? Math.max(taEl.scrollHeight, taEl.offsetHeight, 96) : 96;
+      height = tipH + titleH + taH + actionsH + 24 + bodyPad + toolbarH + hintH;
+    } else if (chatOpen) {
+      // AI 对话界面：tip + 消息列表（scrollHeight 不受 max-height 裁剪影响）+ 输入行
+      const panelEl = document.querySelector(".chat-panel");
+      const tipEl = panelEl ? panelEl.querySelector(".chat-tip") : null;
+      const listEl = panelEl ? panelEl.querySelector(".chat-list") : null;
+      const rowEl = panelEl ? panelEl.querySelector(".chat-input-row") : null;
+      const bodyPad = 24;
+      const tipH = tipEl ? tipEl.offsetHeight : 0;
+      const listH = listEl ? Math.max(listEl.scrollHeight, 120) : 120;
+      const rowH = rowEl ? rowEl.offsetHeight : 0;
+      height = tipH + listH + rowH + 16 + bodyPad + toolbarH + hintH;
+    } else if (appendMode) {
       // 拼接模式：按「内容自然高度」计算，而不是 panel.offsetHeight。
       // panel 高度受卡片 maxHeight 钳制（flex 布局），文本越多 textarea 越早进入
       // 溢出滚动，offsetHeight 不再增长反而随卡片缩小——必须用 textarea.scrollHeight
@@ -724,7 +895,10 @@ function CardPage() {
       height = document.body.scrollHeight;
     }
     // 下拉菜单打开：确保卡片高度 ≥ 菜单顶部偏移(46) + 菜单高度 + 底部边距(8)
-    const menuEl = switchOpen ? switchMenuRef.current : modelPickerOpen ? modelPickerRef.current : null;
+    const menuEl = switchOpen ? switchMenuRef.current
+      : modelPickerOpen ? modelPickerRef.current
+      : chatPickerOpen ? chatPickerRef.current
+      : null;
     if (menuEl) {
       const menuBottom = 46 + menuEl.offsetHeight + 8;
       if (height < menuBottom) height = menuBottom;
@@ -773,21 +947,21 @@ function CardPage() {
   // delta 都会重建 interval，测量将永远无法触发（v0.7.5 已踩坑）。
   const isStreaming = state.status === "streaming";
   useEffect(() => {
-    if (!isStreaming) return undefined;
+    if (!isStreaming && !chatSending) return undefined;
     const interval = setInterval(() => {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 60);
     return () => clearInterval(interval);
-  }, [isStreaming]);
+  }, [isStreaming, chatSending]);
 
-  // 非 streaming（done / 词典 / 加载 / 菜单 / 历史面板等）：状态稳定后一次性测量
+  // 非 streaming（done / 词典 / 加载 / 菜单 / 历史面板 / 笔记 / 对话等）：状态稳定后一次性测量
   useEffect(() => {
     if (isStreaming) return undefined;
     const timer = setTimeout(() => {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending]);
 
 // 拼接模式：textarea 高度 auto-grow（基于 scrollHeight），到 CSS max-height 上限内部滚动。
   //   - onChange 触发的内容增长：见 onAppendChange，用 rAF 同步设 height；
@@ -853,43 +1027,656 @@ function CardPage() {
     return lines.join("\n");
   }, []);
 
-  // 「添加卡片」：把当前结果保存为一条新笔记（Markdown 模式默认开启）。
+  // 当前结果 → 卡片内容组成（「添加卡片」与笔记编辑共用）：
   // 查词 → 单词为标题、查词结果（音标+释义）为正文；AI 解释 → 单词为标题、解释为正文；
-  // 翻译 → 原句为标题、译文为正文。经 bridge 交给插件层在当前文档所属笔记本下创建。
-  // 插件侧会调 dc.highlightFromSelection() 让原文自动高亮，并让新节点可点击跳转原文。
-  // 颜色按当前任务类型取对应配置（查词/AI 解释 → cardColorLookup，翻译 → cardColorTranslate）。
-  const addCard = useCallback(async () => {
-    let title = "";
-    let body = "";
-    let kind = ""; // "translate" | "lookup"
+  // 翻译 → 原句为标题、译文为正文。kind: "translate" | "lookup" | "explain"（决定卡片颜色）。
+  const buildResultParts = useCallback(() => {
     if (state.status === "dict" && state.dict) {
-      title = state.dict.word;
       // 卡片标题已是单词，正文不再重复（includeWord=false）；分组排版见 buildDictBody
-      body = buildDictBody(state.dict, false);
-      kind = "lookup";
-    } else if (state.status === "done" && (state.mode === "explain" || state.mode === "translate")) {
-      title = state.sourceText;
-      body = state.accumulated;
-      kind = state.mode; // "translate" | "explain"（两者都用 cardColorLookup）
+      return { title: state.dict.word, body: buildDictBody(state.dict, false), kind: "lookup" };
     }
-    if (!title.trim() && !body.trim()) {
+    if (state.status === "done" && (state.mode === "explain" || state.mode === "translate")) {
+      return { title: state.sourceText, body: state.accumulated, kind: state.mode };
+    }
+    return { title: "", body: "", kind: "" };
+  }, [state.status, state.dict, state.mode, state.sourceText, state.accumulated, buildDictBody]);
+
+  // 按任务类型取卡片颜色配置（查词/AI 解释 → cardColorLookup，翻译 → cardColorTranslate）
+  const colorIndexForKind = useCallback((kind) => (
+    kind === "translate"
+      ? (Number.isFinite(config.cardColorTranslate) ? config.cardColorTranslate : 0)
+      : (Number.isFinite(config.cardColorLookup) ? config.cardColorLookup : 0)
+  ), [config.cardColorTranslate, config.cardColorLookup]);
+
+  // 「添加卡片」：把当前结果保存为一条新笔记（Markdown 模式默认开启）。
+  // 经 bridge 交给插件层在当前文档所属笔记本下创建；插件侧会调 dc.highlightFromSelection()
+  // 让原文自动高亮，并让新节点可点击跳转原文。
+  const addCard = useCallback(async () => {
+    const parts = buildResultParts();
+    if (!parts.title.trim() && !parts.body.trim()) {
       showHint("暂无内容可添加为卡片");
       return;
     }
     // 规范化正文：markdown 水平线 `---` 前后必须有空行，否则会被渲染成 `## ---` 二级标题
     // （用户实测 2026-08-15：AI 解释输出 `**音标**\n---\n**释义**` 时 MN 排版混乱）
-    body = normalizeCardBody(body);
-    const colorIndex = kind === "translate"
-      ? (Number.isFinite(config.cardColorTranslate) ? config.cardColorTranslate : 0)
-      : (Number.isFinite(config.cardColorLookup) ? config.cardColorLookup : 0);
+    const body = normalizeCardBody(parts.body);
     try {
-      await MNBridge.send("addCard", { title, body, markdown: true, colorIndex });
+      await MNBridge.send("addCard", {
+        title: parts.title,
+        body,
+        markdown: true,
+        colorIndex: colorIndexForKind(parts.kind),
+      });
       showHint("已添加卡片到当前笔记本（原文已高亮）");
     } catch (error) {
       showHint(`添加卡片失败：${(error && error.message) || "请重试"}`);
     }
-  }, [state.status, state.dict, state.mode, state.sourceText, state.accumulated,
-      config.cardColorTranslate, config.cardColorLookup, buildDictBody, showHint]);
+  }, [buildResultParts, colorIndexForKind, showHint]);
+
+  // 「添加」按钮：单击 = 直接创建卡片（延迟 280ms 与双击区分）；双击 = 进入笔记编辑界面
+  const onAddClick = () => {
+    if (addTimerRef.current) {
+      // 280ms 内第二次点击：判定为双击，由 onAddDoubleClick 处理
+      clearTimeout(addTimerRef.current);
+      addTimerRef.current = null;
+      return;
+    }
+    addTimerRef.current = setTimeout(() => {
+      addTimerRef.current = null;
+      addCard();
+    }, 280);
+  };
+
+  const onAddDoubleClick = (e) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+    if (addTimerRef.current) {
+      clearTimeout(addTimerRef.current);
+      addTimerRef.current = null;
+    }
+    openNoteEditor();
+  };
+
+  // ---------- 笔记编辑界面（N 键 / 双击「添加」按钮进入） ----------
+
+  // 笔记编辑区高度 auto-grow（同拼接编辑区：scrollHeight 显式设 height，到 max-height 内部滚动）
+  const adjustNoteTextarea = useCallback(() => {
+    const ta = noteTextareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const maxH = parseFloat(getComputedStyle(ta).maxHeight) || 356;
+    const target = Math.min(ta.scrollHeight, maxH);
+    ta.style.height = target + "px";
+    ta.scrollTop = ta.scrollHeight;
+  }, []);
+
+  // 进入笔记编辑：按设置决定是否自动附带查词/翻译结果（或对话回答），
+  // 附带时笔记添加在结果之后，以「---」分隔（上下各空一行，避免 MarginNote 渲染错误）。
+  // customParts = {title, body, kind}：来自 AI 对话回答（气泡「添加笔记」双击），不传则取当前结果
+  const openNoteEditor = useCallback((customParts) => {
+    const isCustom = !!(customParts && (customParts.title || customParts.body));
+    const parts = isCustom
+      ? { title: customParts.title || "", body: customParts.body || "", kind: customParts.kind || "" }
+      : buildResultParts();
+    if (!String(parts.title).trim() && !String(parts.body).trim()) {
+      showHint(isCustom ? "内容为空" : "暂无查词/翻译结果，先查询后再编辑笔记");
+      return;
+    }
+    noteKindRef.current = parts.kind || "";
+    const includeResult = config.noteIncludeResult !== false;
+    setNoteTitle(parts.title || "");
+    setNoteText(includeResult ? parts.body + "\n\n---\n\n" : "");
+    setNoteOpen(true);
+    // 聚焦到编辑区末尾（紧接分隔线之后，直接开始写笔记）
+    setTimeout(() => {
+      const ta = noteTextareaRef.current;
+      if (!ta) return;
+      try { window.focus(); } catch (err) { /* ignore */ }
+      ta.focus();
+      const pos = ta.value.length;
+      try { ta.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+    }, 60);
+  }, [buildResultParts, config.noteIncludeResult, showHint]);
+
+  const closeNoteEditor = useCallback(() => {
+    setNoteOpen(false);
+    setNoteTitle("");
+    setNoteText("");
+    noteKindRef.current = "";
+  }, []);
+
+  // 保存笔记并创建卡片：正文 = 编辑区内容（含自动附带的结果时已是「结果 --- 笔记」结构），
+  // 标题 = 标题框内容（默认为单词/原句，可编辑，为空时回落结果标题）；
+  // Option+S 快捷键与「保存并创建卡片」按钮共用。
+  // 卡片颜色按进入编辑时的上下文类型（noteKindRef：结果任务类型 / 对话回答 = lookup）
+  const saveNote = useCallback(async () => {
+    if (!noteText.trim()) {
+      showHint("笔记内容为空");
+      return;
+    }
+    const parts = buildResultParts();
+    const body = normalizeCardBody(noteText);
+    const title = noteTitle.trim() || parts.title;
+    try {
+      await MNBridge.send("addCard", {
+        title,
+        body,
+        markdown: true,
+        colorIndex: colorIndexForKind(noteKindRef.current || parts.kind),
+      });
+      showHint("笔记已保存并创建卡片");
+      closeNoteEditor();
+    } catch (error) {
+      showHint(`保存笔记失败：${(error && error.message) || "请重试"}`);
+    }
+  }, [noteTitle, noteText, buildResultParts, colorIndexForKind, closeNoteEditor, showHint]);
+
+  const onNoteChange = (e) => {
+    setNoteText(e.target.value);
+    requestAnimationFrame(adjustNoteTextarea);
+  };
+
+  // 笔记编辑区内容变化（非 onChange 触发，如进入编辑器时预填结果）：延迟量高
+  useEffect(() => {
+    if (!noteOpen) return undefined;
+    const t = setTimeout(adjustNoteTextarea, 16);
+    return () => clearTimeout(t);
+  }, [noteText, noteOpen, adjustNoteTextarea]);
+
+  // ---------- 机器人图标：单击/双击触发不同 prompt，长按进入 AI 对话 ----------
+
+  const runRobotPrompt = useCallback(async (promptKey) => {
+    try {
+      await MNBridge.send("robotRun", { promptKey });
+    } catch (e) {
+      // 请求级失败（如当前没有进行中的任务）：插件层无 error 事件，此处提示
+      showHint(`执行失败：${(e && e.message) || "请重试"}`);
+    }
+  }, [showHint]);
+
+  // AI 对话（长按机器人进入）：自动将选中文本（当前任务文本）填入输入框
+  const openChat = useCallback(() => {
+    load(); // 打开前刷新配置（路由/开关可能在设置页已改）
+    setChatOpen(true);
+    setChatInput(state.sourceText || "");
+    setTimeout(() => {
+      const input = document.querySelector(".chat-input");
+      if (input) {
+        try { window.focus(); } catch (err) { /* ignore */ }
+        input.focus();
+        const pos = input.value.length;
+        try { input.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+      }
+    }, 60);
+  }, [state.sourceText, load]);
+
+  const openChatRef = useRef(null);
+  openChatRef.current = openChat;
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false);
+    setChatMessages([]);
+    setChatDraft("");
+    setChatInput("");
+    setChatSending(false);
+  }, []);
+
+  const sendChat = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || chatSending) return;
+    const msgs = [...chatMessages, { role: "user", text }];
+    setChatMessages(msgs);
+    setChatInput("");
+    setChatSending(true);
+    try {
+      // 前端持有对话状态，每次发送全量历史；回复经 chatDelta/chatDone/chatError 事件推回
+      await MNBridge.send("chatSend", {
+        messages: msgs.map((m) => ({ role: m.role, content: m.text })),
+        override: chatModelOverride || undefined,
+      });
+    } catch (e) {
+      setChatSending(false);
+      showHint(`发送失败：${(e && e.message) || "请重试"}`);
+    }
+  }, [chatInput, chatMessages, chatSending, chatModelOverride, showHint]);
+
+  // ---------- AI 对话：模型选择 / 重新回答 / 回答操作 ----------
+
+  // 当前生效的对话模型（临时覆盖 > 设置 chat 路由），用于按钮显示
+  const chatRoute = (config.routing && config.routing.chat) || {};
+  const chatModelId = (chatModelOverride && chatModelOverride.modelId) || chatRoute.modelId || "";
+  const chatModelShort = chatModelId ? chatModelId.split("/").pop() : "默认";
+
+  // 重新回答第 index 条回答：截断该条之前的对话（含触发它的提问）重新发送
+  const reAnswerAt = useCallback(async (index, ov) => {
+    const prefix = chatMessages.slice(0, index).filter((m) => m && (m.role === "user" || m.role === "assistant"));
+    if (prefix.length === 0) return;
+    setChatMessages(prefix);
+    setChatDraft("");
+    setChatSending(true);
+    try {
+      await MNBridge.send("chatSend", {
+        messages: prefix.map((m) => ({ role: m.role, content: m.text })),
+        override: ov || chatModelOverride || undefined,
+      });
+    } catch (e) {
+      setChatSending(false);
+      showHint(`重新回答失败：${(e && e.message) || "请重试"}`);
+    }
+  }, [chatMessages, chatModelOverride, showHint]);
+
+  // 模型选择弹层确认：providerId 为空 = 恢复默认路由；target 非空时同时触发该条重新回答
+  const pickChatModel = (providerId, modelId) => {
+    setChatPickerOpen(false);
+    const target = chatPickerTarget;
+    setChatPickerTarget(null);
+    const ov = providerId ? { providerId, modelId } : null;
+    setChatModelOverride(ov);
+    if (target != null) reAnswerAt(target, ov);
+  };
+
+  // 回答气泡 → 笔记内容：标题取该回答前面的最近提问（无则当前任务文本），正文为回答全文
+  const chatNoteParts = (i) => {
+    const answer = String((chatMessages[i] && chatMessages[i].text) || "");
+    let q = "";
+    for (let j = i - 1; j >= 0; j--) {
+      if (chatMessages[j] && chatMessages[j].role === "user") {
+        q = chatMessages[j].text;
+        break;
+      }
+    }
+    return { title: q || state.sourceText || "AI 问答", body: answer };
+  };
+
+  const copyChatAnswer = async (text) => {
+    if (!text) return;
+    try {
+      await MNBridge.send("copyText", { text });
+      showHint("已复制到剪贴板");
+    } catch (e) {
+      showHint("复制失败，请重试");
+    }
+  };
+
+  // 「添加笔记」：单击直接创建卡片；双击进入笔记编辑（与结果卡片「添加」按钮一致）
+  const addChatNoteDirect = async (i) => {
+    const { title, body } = chatNoteParts(i);
+    if (!body.trim()) {
+      showHint("内容为空");
+      return;
+    }
+    try {
+      await MNBridge.send("addCard", {
+        title,
+        body: normalizeCardBody(body),
+        markdown: true,
+        colorIndex: colorIndexForKind("lookup"),
+      });
+      showHint("已添加卡片到当前笔记本");
+    } catch (error) {
+      showHint(`添加卡片失败：${(error && error.message) || "请重试"}`);
+    }
+  };
+
+  const onChatAddClick = (i) => () => {
+    if (chatAddTimerRef.current) {
+      clearTimeout(chatAddTimerRef.current);
+      chatAddTimerRef.current = null;
+      return;
+    }
+    chatAddTimerRef.current = setTimeout(() => {
+      chatAddTimerRef.current = null;
+      addChatNoteDirect(i);
+    }, 280);
+  };
+
+  const onChatAddDoubleClick = (i) => (e) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+    if (chatAddTimerRef.current) {
+      clearTimeout(chatAddTimerRef.current);
+      chatAddTimerRef.current = null;
+    }
+    const { title, body } = chatNoteParts(i);
+    openNoteEditor({ title, body, kind: "lookup" });
+  };
+
+  // 「重新回答」长按阈值（与「重新生成」一致，早于系统长按手势）
+  const REANS_LONG_PRESS_MS = 400;
+  const isRecentReAnsTouch = () => Date.now() - reAnsTouchAtRef.current < 500;
+
+  const startReAnsTimer = (i) => {
+    if (reAnsTimerRef.current) clearTimeout(reAnsTimerRef.current);
+    reAnsTimerRef.current = setTimeout(() => {
+      reAnsLongRef.current = true;
+      load(); // 打开前刷新提供商/模型列表（设置页可能已改）
+      setChatPickerTarget(i);
+      setChatPickerOpen(true);
+    }, REANS_LONG_PRESS_MS);
+  };
+
+  const stopReAnsTimer = () => {
+    if (reAnsTimerRef.current) {
+      clearTimeout(reAnsTimerRef.current);
+      reAnsTimerRef.current = null;
+    }
+  };
+
+  // 鼠标路径（每条回答各一份 handler，闭包捕获索引）
+  const onReAnsMouseDown = (i) => () => {
+    if (isRecentReAnsTouch()) return;
+    reAnsLongRef.current = false;
+    startReAnsTimer(i);
+  };
+
+  const onReAnsMouseUp = () => () => {
+    if (isRecentReAnsTouch()) return;
+    stopReAnsTimer();
+  };
+
+  const onReAnsMouseLeave = () => () => {
+    if (isRecentReAnsTouch()) return;
+    stopReAnsTimer();
+    if (reAnsLongRef.current) reAnsLongRef.current = false;
+  };
+
+  const onReAnsClick = (i) => () => {
+    if (isRecentReAnsTouch()) return;
+    stopReAnsTimer();
+    if (reAnsLongRef.current) {
+      reAnsLongRef.current = false;
+      return; // 长按已打开选模型，点击不重复回答
+    }
+    reAnswerAt(i, null);
+  };
+
+  // 触摸路径（iPad / Apple Pencil）：长按 → 选模型；轻点 → 重新回答
+  const onReAnsTouchStart = (i) => () => {
+    reAnsTouchAtRef.current = Date.now();
+    reAnsLongRef.current = false;
+    startReAnsTimer(i);
+  };
+
+  const onReAnsTouchEnd = (i) => () => {
+    reAnsTouchAtRef.current = Date.now();
+    const wasLong = reAnsLongRef.current;
+    stopReAnsTimer();
+    if (wasLong) {
+      reAnsLongRef.current = false;
+      return; // 长按已打开选模型
+    }
+    reAnswerAt(i, null);
+  };
+
+  const onReAnsTouchCancel = () => () => {
+    reAnsTouchAtRef.current = Date.now();
+    stopReAnsTimer();
+    reAnsLongRef.current = false;
+  };
+
+  // 对话消息更新后滚动到底部（最新消息可见）
+  useEffect(() => {
+    const list = chatListRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [chatMessages, chatDraft, chatOpen]);
+
+  // 机器人长按阈值（同「重新生成」400ms，早于系统长按手势）
+  const ROBOT_LONG_PRESS_MS = 400;
+  const clearRobotTimers = () => {
+    if (robotTimerRef.current) {
+      clearTimeout(robotTimerRef.current);
+      robotTimerRef.current = null;
+    }
+    if (robotPressTimerRef.current) {
+      clearTimeout(robotPressTimerRef.current);
+      robotPressTimerRef.current = null;
+    }
+  };
+  const isRecentRobotTouch = () => Date.now() - robotTouchAtRef.current < 500;
+
+  const robotLongPressFire = () => {
+    robotLongFiredRef.current = true;
+    if (useConfigStore.getState().config.robotChatEnabled !== false) {
+      openChatRef.current();
+    }
+  };
+
+  // 鼠标路径：mousedown 起长按计时；click 经 280ms 延迟与双击区分；长按后抑制 click
+  const onRobotMouseDown = () => {
+    if (isRecentRobotTouch()) return;
+    robotLongFiredRef.current = false;
+    if (robotPressTimerRef.current) clearTimeout(robotPressTimerRef.current);
+    robotPressTimerRef.current = setTimeout(robotLongPressFire, ROBOT_LONG_PRESS_MS);
+  };
+
+  const onRobotMouseUp = () => {
+    if (isRecentRobotTouch()) return;
+    if (robotPressTimerRef.current) {
+      clearTimeout(robotPressTimerRef.current);
+      robotPressTimerRef.current = null;
+    }
+  };
+
+  const onRobotMouseLeave = () => {
+    if (isRecentRobotTouch()) return;
+    if (robotPressTimerRef.current) {
+      clearTimeout(robotPressTimerRef.current);
+      robotPressTimerRef.current = null;
+    }
+    if (robotLongFiredRef.current) robotLongFiredRef.current = false;
+  };
+
+  const onRobotClick = () => {
+    if (isRecentRobotTouch()) return;
+    if (robotLongFiredRef.current) {
+      robotLongFiredRef.current = false;
+      return; // 长按已进入 AI 对话，点击不触发 prompt
+    }
+    if (robotTimerRef.current) {
+      // 280ms 内第二次点击：判定为双击，由 onRobotDoubleClick 处理
+      clearTimeout(robotTimerRef.current);
+      robotTimerRef.current = null;
+      return;
+    }
+    robotTimerRef.current = setTimeout(() => {
+      robotTimerRef.current = null;
+      runRobotPrompt("explain"); // 单击 = AI 解释 prompt（与设置「AI 解释 Prompt」同一模板）
+    }, 280);
+  };
+
+  const onRobotDoubleClick = (e) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+    if (isRecentRobotTouch()) return;
+    if (robotTimerRef.current) {
+      clearTimeout(robotTimerRef.current);
+      robotTimerRef.current = null;
+    }
+    if (robotLongFiredRef.current) {
+      robotLongFiredRef.current = false;
+      return;
+    }
+    runRobotPrompt("robotDouble");
+  };
+
+  // 触摸路径（iPad / Apple Pencil）：长按 → AI 对话；轻点 → 单击 prompt
+  // （触摸后的合成 mouse 事件 500ms 内一律忽略，避免双触发；触摸双击暂不支持）
+  const bindRobotTouch = useCallback((el) => {
+    if (robotTouchCleanupRef.current) {
+      robotTouchCleanupRef.current();
+      robotTouchCleanupRef.current = null;
+    }
+    if (!el) return;
+
+    let active = false;
+
+    const onTouchStart = (e) => {
+      robotTouchAtRef.current = Date.now();
+      active = true;
+      robotLongFiredRef.current = false;
+      if (robotPressTimerRef.current) clearTimeout(robotPressTimerRef.current);
+      if (e.cancelable) e.preventDefault(); // 抑制系统长按手势
+      robotPressTimerRef.current = setTimeout(() => {
+        if (!active) return;
+        robotLongPressFire();
+      }, ROBOT_LONG_PRESS_MS);
+    };
+
+    const onTouchMove = (e) => {
+      const t = e.touches && e.touches[0];
+      if (t) {
+        const r = el.getBoundingClientRect();
+        if (
+          t.clientX >= r.left - 12 &&
+          t.clientX <= r.right + 12 &&
+          t.clientY >= r.top - 12 &&
+          t.clientY <= r.bottom + 12
+        ) {
+          return;
+        }
+      }
+      active = false;
+      if (robotPressTimerRef.current) {
+        clearTimeout(robotPressTimerRef.current);
+        robotPressTimerRef.current = null;
+      }
+    };
+
+    const onTouchEnd = () => {
+      robotTouchAtRef.current = Date.now();
+      const wasLong = robotLongFiredRef.current;
+      const wasActive = active;
+      active = false;
+      if (robotPressTimerRef.current) {
+        clearTimeout(robotPressTimerRef.current);
+        robotPressTimerRef.current = null;
+      }
+      if (wasLong) {
+        robotLongFiredRef.current = false;
+        return; // 长按已进入 AI 对话
+      }
+      if (wasActive) {
+        runRobotPrompt("explain"); // 轻点 = 单击（AI 解释 prompt）
+      }
+    };
+
+    const onTouchCancel = () => {
+      robotTouchAtRef.current = Date.now();
+      active = false;
+      if (robotPressTimerRef.current) {
+        clearTimeout(robotPressTimerRef.current);
+        robotPressTimerRef.current = null;
+      }
+      if (robotLongFiredRef.current) robotLongFiredRef.current = false;
+    };
+
+    try {
+      el.addEventListener("touchstart", onTouchStart, { passive: false });
+    } catch (err) {
+      el.addEventListener("touchstart", onTouchStart, false);
+    }
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchCancel);
+    robotTouchCleanupRef.current = () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [runRobotPrompt]);
+
+  // ---------- 快捷键历史导航（上/左 = 上一条，下/右 = 下一条） ----------
+
+  // step: +1 = 上一个（更早），-1 = 下一个（更新）；列表按最近使用优先（与历史面板一致）。
+  // 从头开始导航（idx=-1）时重新拉取：缓存持久化后新查询会追加，旧列表可能过期
+  const navHistory = useCallback(async (step) => {
+    const kind = state.mode === "translate" ? "translate" : "lookup";
+    if (!histNavListRef.current || histNavKindRef.current !== kind || histNavIdxRef.current === -1) {
+      try {
+        const r = await MNBridge.send("getHistory", { kind });
+        histNavListRef.current = (r && r.items) || [];
+        histNavKindRef.current = kind;
+        if (histNavIdxRef.current !== -1) histNavIdxRef.current = -1;
+      } catch (e) {
+        histNavListRef.current = [];
+      }
+    }
+    const list = histNavListRef.current;
+    if (!list.length) {
+      showHint("暂无历史记录");
+      return;
+    }
+    const idx = histNavIdxRef.current + step;
+    if (idx < 0) {
+      showHint("已是最新一条");
+      return;
+    }
+    if (idx >= list.length) {
+      showHint("没有更早的历史记录");
+      return;
+    }
+    histNavIdxRef.current = idx;
+    // 与事件侧一致取 trim 后文本（插件 applyHistory 推 loading 时会 trim），
+    // 否则首尾空白差异会导致索引被误判为新任务而重置
+    histNavAppliedRef.current = String(list[idx].sourceText || "").trim();
+    try {
+      await MNBridge.send("applyHistory", { kind, item: list[idx] });
+      showHint(`历史 ${idx + 1}/${list.length}`);
+    } catch (e) {
+      // 插件层已兜底
+    }
+  }, [state.mode, showHint]);
+
+  // ---------- 快捷键统一入口（D / N / Option+S / 方向键，设置中可自定义） ----------
+
+  // D：聚焦搜索框（Enter 查询走搜索框已有逻辑）；N：进入笔记编辑；
+  // Option+S：保存笔记并创建卡片（仅笔记编辑界面内生效，且需拦截避免输入特殊字符）；
+  // 上/左、下/右：历史导航。输入框/编辑区内（除 Option+S）不触发，避免误伤打字。
+  shortcutsRef.current = (e) => {
+    const sc = config.shortcuts || {};
+    const saveSc = parseShortcut(sc.save || "alt+s");
+    if (matchShortcut(e, saveSc)) {
+      // Option+S 会输入特殊字符（如 ß）：在笔记编辑界面内拦截并保存，其他场景放行
+      if (noteOpen) {
+        e.preventDefault();
+        saveNote();
+      }
+      return;
+    }
+    const t = e.target;
+    const inEditable = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable));
+    if (inEditable) return; // 打字中：单键快捷键不触发（方向键移动光标等保持原生行为）
+    if (noteOpen || chatOpen) return; // 笔记/对话界面：方向键等留给编辑器
+    if (appendMode) return; // 拼接编辑界面同理
+    if (matchAnyShortcut(e, sc.historyPrev || "ArrowUp,ArrowLeft")) {
+      e.preventDefault();
+      navHistory(1); // 上一个（更早）
+      return;
+    }
+    if (matchAnyShortcut(e, sc.historyNext || "ArrowDown,ArrowRight")) {
+      e.preventDefault();
+      navHistory(-1); // 下一个（更新）
+      return;
+    }
+    if (matchShortcut(e, parseShortcut(sc.lookup || "d"))) {
+      e.preventDefault();
+      setSearchText("");
+      setSearchOpen(true);
+      setSearchFocusTick((v) => v + 1); // 已展开时也重新触发聚焦
+      return;
+    }
+    if (matchShortcut(e, parseShortcut(sc.note || "n"))) {
+      e.preventDefault();
+      openNoteEditor();
+    }
+  };
+
+  // 快捷键监听只绑定一次，回调经 shortcutsRef 读取最新闭包（同 doMeasureRef 模式）
+  useEffect(() => {
+    const onKeydown = (e) => {
+      if (shortcutsRef.current) shortcutsRef.current(e);
+    };
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
+  }, []);
 
   // 规范化卡片正文的 markdown 水平线：
   //   - 识别单独成行的 `---`（允许行尾空格）；
@@ -939,8 +1726,10 @@ function CardPage() {
 
   // ---------- 历史记录（数据源 = 查词/翻译缓存） ----------
 
-  // 当前界面对应的历史类型：查词（含 AI 解释）或翻译，各自独立
-  const historyKind = state.mode === "translate" ? "translate" : "lookup";
+  // 当前界面对应的历史类型：AI 问答（对话界面）/ 查词（含 AI 解释）/ 翻译，各自独立
+  const historyKind = chatOpen
+    ? "chat"
+    : (state.mode === "translate" ? "translate" : "lookup");
 
   const openHistory = useCallback(async () => {
     if (historyOpen) {
@@ -951,8 +1740,14 @@ function CardPage() {
     setHistoryLoading(true);
     setHistoryItems([]);
     try {
-      const r = await MNBridge.send("getHistory", { kind: historyKind });
-      setHistoryItems((r && r.items) || []);
+      if (historyKind === "chat") {
+        // AI 问答历史：[{question, answer, at}]，列表显示发送给 AI 的问题
+        const r = await MNBridge.send("getChatHistory");
+        setHistoryItems((r && r.items) || []);
+      } else {
+        const r = await MNBridge.send("getHistory", { kind: historyKind });
+        setHistoryItems((r && r.items) || []);
+      }
     } catch (e) {
       setHistoryItems([]);
     } finally {
@@ -965,11 +1760,19 @@ function CardPage() {
     setHistoryItems([]);
   }, []);
 
-  // 点击历史条目：插件层直接推送缓存内容，结果卡片显示（不再请求网络）
+  // 点击历史条目：AI 问答 → 回放该轮问答到对话界面；查词/翻译 → 插件层推送缓存内容
   const applyHistoryItem = useCallback(
     async (item) => {
       setHistoryOpen(false);
       setHistoryItems([]);
+      if (historyKind === "chat") {
+        // 回放：作为对话上下文载入，可继续追问（后续发送全量历史）
+        setChatMessages([
+          { role: "user", text: String(item.question || "") },
+          { role: "assistant", text: String(item.answer || "") },
+        ].filter((m) => m.text));
+        return;
+      }
       try {
         await MNBridge.send("applyHistory", { kind: historyKind, item });
       } catch (e) {
@@ -1083,17 +1886,15 @@ const onAppendChange = (e) => {
     requestAnimationFrame(adjustAppendTextarea);
   };
 
-  const switchToAI = () => {
-    MNBridge.send("explainWithAI").catch(() => {});
-  };
-
   const retry = () => {
     // 重新触发当前任务（插件侧 job 仍保留）
     MNBridge.send("cardReady").catch(() => {});
   };
 
-  const modeLabel =
-    state.mode === "lookup" ? "查词" : state.mode === "explain" ? "AI 解释" : "翻译";
+  // 对话界面时工具栏左侧文字切换为「AI问答」（历史按钮提示随之变化）
+  const modeLabel = chatOpen
+    ? "AI问答"
+    : (state.mode === "lookup" ? "查词" : state.mode === "explain" ? "AI 解释" : "翻译");
 
   // AI 类结果（翻译 / AI 解释）显示「重新生成」按钮
   const isAIMode = state.mode === "explain" || state.mode === "translate";
@@ -1170,8 +1971,9 @@ const onAppendChange = (e) => {
                 </button>
                 <button
                   className="icon-btn add-btn"
-                  title="添加为卡片：单词为标题、AI 解释为正文（Markdown）"
-                  onClick={addCard}
+                  title="添加为卡片：单词为标题、AI 解释为正文（Markdown）；双击进入笔记编辑"
+                  onClick={onAddClick}
+                  onDoubleClick={onAddDoubleClick}
                 >
                   <AddIcon />
                 </button>
@@ -1183,11 +1985,13 @@ const onAppendChange = (e) => {
               <button
                 className="icon-btn add-btn"
                 title={
-                  state.status === "dict"
+                  (state.status === "dict"
                     ? "添加为卡片：单词为标题、查词结果（音标+释义）为正文"
-                    : "添加为卡片：原句为标题、翻译为正文（Markdown）"
+                    : "添加为卡片：原句为标题、翻译为正文（Markdown）") +
+                  "；双击进入笔记编辑"
                 }
-                onClick={addCard}
+                onClick={onAddClick}
+                onDoubleClick={onAddDoubleClick}
               >
                 <AddIcon />
               </button>
@@ -1214,8 +2018,20 @@ const onAppendChange = (e) => {
                 <RefreshIcon />
               </button>
             )}
-            {state.status === "dict" && (
-              <button className="icon-btn" title="切换为 AI 解释" onClick={switchToAI}>
+            {/* 机器人：单击 = AI 解释（与「AI 解释 Prompt」同一模板）；双击 = 深度分析（robotDouble prompt）；
+                长按 = AI 对话（自动填入选中文本，路由见设置「模型路由 → AI 对话」）。
+                两种 prompt 均可在设置「Prompt 模板」中自定义 */}
+            {(state.status === "dict" || state.status === "done") && (
+              <button
+                ref={bindRobotTouch}
+                className="icon-btn robot-btn"
+                title="单击：AI 解释；双击：深度分析；长按：AI 对话（可在设置中自定义）"
+                onMouseDown={onRobotMouseDown}
+                onMouseUp={onRobotMouseUp}
+                onMouseLeave={onRobotMouseLeave}
+                onClick={onRobotClick}
+                onDoubleClick={onRobotDoubleClick}
+              >
                 <RobotIcon />
               </button>
             )}
@@ -1269,14 +2085,149 @@ const onAppendChange = (e) => {
             </div>
           </div>
         )}
-        {state.status === "loading" && (
+        {/* 笔记编辑界面（N 键 / 双击「添加」按钮进入）：
+            标题默认为单词/原句可编辑；查词/翻译结果自动附带在正文上方（可在设置关闭），
+            笔记写在「---」分隔线之后，保存（按钮或 Option+S）后自动创建卡片 */}
+        {noteOpen && (
+          <div className="note-panel" onDoubleClick={(e) => e.stopPropagation()}>
+            <div className="note-tip">
+              笔记编辑：在分隔线下方书写笔记，保存后自动创建卡片
+              {config.noteIncludeResult !== false ? "（上方为查词/翻译结果）" : ""}
+            </div>
+            <input
+              className="note-title-input"
+              value={noteTitle}
+              placeholder="标题（默认为单词/原句，可修改）"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              onChange={(e) => setNoteTitle(e.target.value)}
+            />
+            <textarea
+              ref={noteTextareaRef}
+              className="note-textarea"
+              value={noteText}
+              onChange={onNoteChange}
+              placeholder={config.noteIncludeResult !== false ? "结果下方书写笔记…" : "书写笔记…"}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+            <div className="note-actions">
+              <button className="btn btn-sm" onClick={() => { setNoteText(""); requestAnimationFrame(adjustNoteTextarea); }}>清空笔记</button>
+              <button className="btn btn-sm btn-primary" onClick={saveNote}>
+                保存并创建卡片
+              </button>
+              <button className="btn btn-sm" onClick={closeNoteEditor}>退出</button>
+            </div>
+          </div>
+        )}
+        {/* AI 对话界面（长按机器人图标进入）：选中文本已自动填入输入框，
+            对话走「模型路由 → AI 对话」配置的提供商与模型 */}
+        {chatOpen && (
+          <div className="chat-panel" onDoubleClick={(e) => e.stopPropagation()}>
+            <div className="chat-tip">AI 对话：基于选中内容继续提问（回车发送）</div>
+            <div className="chat-list" ref={chatListRef}>
+              {chatMessages.length === 0 && !chatDraft && !chatSending && (
+                <div className="chat-empty">输入内容后回车发送，开始与 AI 对话…</div>
+              )}
+              {chatMessages.map((m, i) => (
+                m.role === "assistant" ? (
+                  // AI 回复按 markdown 渲染（代码块/加粗/列表等与结果区一致）；
+                  // 气泡下方操作行：复制 / 添加笔记（单击建卡、双击编辑）/ 重新回答（长按选模型）
+                  <div key={i} className="chat-msg-wrap">
+                    <div
+                      className="chat-msg chat-msg-assistant"
+                      dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
+                    />
+                    <div className="chat-msg-actions">
+                      <button
+                        className="icon-btn chat-act-btn"
+                        title="复制回答"
+                        onClick={() => copyChatAnswer(m.text)}
+                      >
+                        <CopyIcon />
+                      </button>
+                      <button
+                        className="icon-btn chat-act-btn"
+                        title="添加笔记：单击直接创建卡片；双击进入笔记编辑"
+                        onClick={onChatAddClick(i)}
+                        onDoubleClick={onChatAddDoubleClick(i)}
+                      >
+                        <AddIcon />
+                      </button>
+                      <button
+                        className="icon-btn chat-act-btn"
+                        title="点击重新回答；长按选择模型"
+                        onMouseDown={onReAnsMouseDown(i)}
+                        onMouseUp={onReAnsMouseUp()}
+                        onMouseLeave={onReAnsMouseLeave()}
+                        onClick={onReAnsClick(i)}
+                        onTouchStart={onReAnsTouchStart(i)}
+                        onTouchEnd={onReAnsTouchEnd(i)}
+                        onTouchCancel={onReAnsTouchCancel()}
+                      >
+                        <RefreshIcon />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={i} className="chat-msg chat-msg-user">{m.text}</div>
+                )
+              ))}
+              {/* 等待回复：三个连续跃动的点；收到首个增量后切换为流式草稿 */}
+              {chatSending && !chatDraft && (
+                <div className="chat-msg chat-msg-assistant chat-loading">
+                  <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
+                </div>
+              )}
+              {chatDraft && (
+                <div
+                  className="chat-msg chat-msg-assistant"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(chatDraft) }}
+                />
+              )}
+            </div>
+            <div className="chat-input-row">
+              {/* 模型选择：显示当前生效模型（临时覆盖 > 默认路由），点击切换 */}
+              <button
+                className="chat-model-btn"
+                title={`AI 对话模型：${chatModelId || "默认路由（设置 → 模型路由 → AI 对话）"}，点击切换`}
+                onClick={() => {
+                  load(); // 打开前刷新提供商/模型列表（设置页可能已改）
+                  setChatPickerTarget(null);
+                  setChatPickerOpen(true);
+                }}
+              >
+                {chatModelShort}
+              </button>
+              <input
+                className="chat-input"
+                value={chatInput}
+                placeholder="输入问题，回车发送…"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendChat();
+                }}
+              />
+              <button className="btn btn-sm" onClick={sendChat} disabled={chatSending || !chatInput.trim()}>
+                {chatSending ? "回复中…" : "发送"}
+              </button>
+              <button className="btn btn-sm" onClick={closeChat}>关闭</button>
+            </div>
+          </div>
+        )}
+        {!noteOpen && !chatOpen && state.status === "loading" && (
           <div className="card-loading">
             <span className="spinner" />
             正在{modeLabel}…
           </div>
         )}
 
-        {(state.status === "streaming" || state.status === "done") && (
+        {!noteOpen && !chatOpen && (state.status === "streaming" || state.status === "done") && (
           <div className="card-result">
             <span
               dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }}
@@ -1285,7 +2236,7 @@ const onAppendChange = (e) => {
           </div>
         )}
 
-        {state.status === "dict" && state.dict && (
+        {!noteOpen && !chatOpen && state.status === "dict" && state.dict && (
           <div className="dict-result" ref={dictRef}>
             <div className="dict-head">
               <span className="dict-word">{state.dict.word}</span>
@@ -1341,7 +2292,7 @@ const onAppendChange = (e) => {
           </div>
         )}
 
-        {state.status === "error" && (
+        {!noteOpen && !chatOpen && state.status === "error" && (
           <div className="card-error">
             <p>{state.errorMsg}</p>
             <button className="btn btn-sm" onClick={retry}>
@@ -1452,13 +2403,66 @@ const onAppendChange = (e) => {
         </div>
       )}
 
+      {/* AI 对话模型选择（输入框左侧按钮 / 「重新回答」长按）：临时覆盖 chat 路由，不写回设置 */}
+      {chatPickerOpen && (
+        <div className="menu-overlay" onMouseDown={() => { setChatPickerOpen(false); setChatPickerTarget(null); }}>
+          <div className="model-picker" ref={chatPickerRef} onMouseDown={(e) => e.stopPropagation()}>
+            <div className="model-picker-title">
+              {chatPickerTarget != null ? "选择模型重新回答" : "选择 AI 对话模型"}
+            </div>
+            {config.providers.length === 0 && (
+              <div className="model-picker-empty">暂无可用的服务提供商，请先在设置中添加。</div>
+            )}
+            {config.providers.map((p) => (
+              <div className="model-picker-group" key={p.id}>
+                <div
+                  className="model-picker-provider"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => toggleProvider(p.id)}
+                  title={collapsedProviders[p.id] ? "展开" : "折叠"}
+                >
+                  <span className={`model-picker-caret ${collapsedProviders[p.id] ? "" : "is-open"}`}>▶</span>
+                  <span className="model-picker-provider-name">{p.name}</span>
+                  <span className="model-picker-count">{p.models.length}</span>
+                </div>
+                {!collapsedProviders[p.id] && p.models.length === 0 && (
+                  <div className="model-picker-no-model">该提供商暂无模型</div>
+                )}
+                {!collapsedProviders[p.id] && p.models.length > 0 && (
+                  <div className="model-picker-models">
+                    {p.models.map((m) => (
+                      <button
+                        key={m.id}
+                        className="model-picker-item"
+                        title={m.id}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => pickChatModel(p.id, m.id)}
+                      >
+                        {m.id}{chatModelId === m.id ? " ✓" : ""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <button
+              className="model-picker-item model-picker-reset"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => pickChatModel(null, "")}
+            >
+              使用默认路由（设置 → 模型路由 → AI 对话）
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 历史记录浮层（数据源 = 查词/翻译缓存，查词与翻译各自独立） */}
       {historyOpen && (
         <div className="history-overlay" onMouseDown={closeHistory}>
           <div className="history-panel" ref={historyPanelRef} onMouseDown={(e) => e.stopPropagation()}>
             <div className="history-panel-head">
               <span className="history-panel-title">
-                {historyKind === "translate" ? "翻译历史" : "查词历史"}
+                {historyKind === "chat" ? "AI 问答历史" : historyKind === "translate" ? "翻译历史" : "查词历史"}
               </span>
               <button className="icon-btn" title="关闭" onClick={closeHistory}>
                 <CloseIcon />
@@ -1467,7 +2471,9 @@ const onAppendChange = (e) => {
             {historyLoading && <div className="history-empty">加载中…</div>}
             {!historyLoading && historyItems.length === 0 && (
               <div className="history-empty">
-                {historyKind === "translate"
+                {historyKind === "chat"
+                  ? "暂无问答历史。与 AI 的每轮问答会自动保存（最近 50 条）。"
+                  : historyKind === "translate"
                   ? "暂无翻译历史。翻译过的内容会保存在 AI 翻译缓存中。"
                   : "暂无查词历史。查询过的单词会保存在查词缓存中。"}
               </div>
@@ -1475,7 +2481,17 @@ const onAppendChange = (e) => {
             {!historyLoading && historyItems.length > 0 && (
               <div className="history-list">
                 {historyItems.map((item, i) =>
-                  historyKind === "translate" ? (
+                  historyKind === "chat" ? (
+                    <button
+                      key={item.at || i}
+                      className="history-item history-item-trans"
+                      title="点击回放该轮问答（可继续追问）"
+                      onClick={() => applyHistoryItem(item)}
+                    >
+                      <span className="history-item-src">{item.question}</span>
+                      <span className="history-item-text">{item.answer}</span>
+                    </button>
+                  ) : historyKind === "translate" ? (
                     <button
                       key={item.key || i}
                       className="history-item history-item-trans"

@@ -6,6 +6,7 @@ JSB.require("SHA1");
 JSB.require("SHA256");
 JSB.require("SettingsStore");
 JSB.require("CacheStore");
+JSB.require("ChatHistoryStore");
 JSB.require("ConfigSync");
 JSB.require("PromptTemplates");
 JSB.require("AIService");

@@ -146,6 +146,28 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATFlow.explainWithAI();
   }
 
+  // 机器人图标：单击 / 双击触发对应自定义 prompt（设置「Prompt 模板」可自定义两种模板）
+  function robotRun(context, payload) {
+    if (!payload || !payload.promptKey) {
+      throw new Error("缺少 promptKey 参数");
+    }
+    return MNIATFlow.robotPrompt(String(payload.promptKey));
+  }
+
+  // AI 对话（长按机器人图标）：payload.messages = [{role, content}] 完整对话历史；
+  // payload.override = {providerId, modelId} 临时覆盖 chat 路由（模型选择 / 重新回答选模型）
+  function chatSend(context, payload) {
+    if (!payload || !Array.isArray(payload.messages)) {
+      throw new Error("缺少对话消息");
+    }
+    return MNIATFlow.chatSend(payload.messages, payload.override);
+  }
+
+  // AI 对话历史：[{question, answer, at}]，最近在前（点击条目回放该轮问答）
+  function getChatHistory() {
+    return { items: MNIATChatHistory.list() };
+  }
+
   // 工具栏搜索框查询任意单词：用默认查词服务提供商（config.lookupProvider）查词
   function cardLookup(context, payload) {
     if (!payload || !payload.text) {
@@ -270,6 +292,9 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     copyText,
     addCard,
     explainWithAI,
+    robotRun,
+    chatSend,
+    getChatHistory,
     cardLookup,
     cardLookupProvider,
     regenerate,

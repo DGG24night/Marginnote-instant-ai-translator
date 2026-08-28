@@ -8,9 +8,9 @@ var MNIATFloatingCard = (function () {
   var CARD_WIDTH = 360;
   var CARD_HEIGHT = 180;      // 初始高度（loading 态），内容到达后由前端测量上报自适应
   var CARD_MIN_HEIGHT = 80;
-  var CARD_MAX_HEIGHT = 500; // 跨页拼接段落原文放宽到 500，避免卡片过大遮挡文档
+  var CARD_MAX_HEIGHT = 500; // 自动高度测量上限（手动拖拽缩放不受此限制，无级调节）
   var CARD_MIN_WIDTH = 260;
-  var CARD_MAX_WIDTH = 520;
+  var CARD_MAX_WIDTH = 520; // 自动宽度上限（同上，仅约束自动路径）
   var CARD_MARGIN = 8;
   var EDGE_PADDING = 12;
   var CARD_DRAG_TOP = 44;             // 顶部拖动条高度（覆盖 web toolbar 区域）
@@ -337,7 +337,8 @@ var MNIATFloatingCard = (function () {
       }
     },
 
-    // 右下角缩放手柄：改变卡片宽高，结束后按"记住大小"开关决定是否持久化
+    // 右下角缩放手柄：改变卡片宽高，结束后按"记住大小"开关决定是否持久化。
+    // 手动调整不设上限（无级调节，仅受屏幕边界约束）；CARD_MAX_* 仅用于自动高度测量
     handleCardResize: function (recognizer) {
       if (recognizer.state === 1) {
         self._resizeStartFrame = self.view.frame;
@@ -347,8 +348,8 @@ var MNIATFloatingCard = (function () {
       if (recognizer.state === 2) {
         var translation = recognizer.translationInView(self.view.superview);
         var start = self._resizeStartFrame;
-        var width = Math.max(CARD_MIN_WIDTH, Math.min(start.width + translation.x, CARD_MAX_WIDTH));
-        var height = Math.max(CARD_MIN_HEIGHT, Math.min(start.height + translation.y, CARD_MAX_HEIGHT));
+        var width = Math.max(CARD_MIN_WIDTH, start.width + translation.x);
+        var height = Math.max(CARD_MIN_HEIGHT, start.height + translation.y);
         var superview = self.view.superview;
         var bounds = superview ? superview.bounds : { x: 0, y: 0, width: 1920, height: 1080 };
         var f = { x: start.x, y: start.y, width: width, height: height };

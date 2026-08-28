@@ -334,10 +334,10 @@ var MNIAIService = (function () {
     return { cancel: cancel };
   }
 
-  // 非流式请求：一次性拿完整结果（streamMode=false 时直接用）
-  function runOnce(provider, route, prompt, handlers) {
-    var body = buildBody(provider, route.modelId, route, prompt);
-    console.log("[MNIAIService] request start (non-stream): " + provider.name + " / " + route.modelId);
+  // 非流式请求：一次性拿完整结果（streamMode=false 时直接用）。
+  // body 为完整请求体（buildBody 或 AI 对话 messages 构造），供翻译与对话共用。
+  function requestOnce(provider, body, handlers) {
+    console.log("[MNIAIService] request start (non-stream): " + provider.name + " / " + body.model);
 
     MNNetwork.fetch(endpointOf(provider), {
       method: "POST",
@@ -362,8 +362,8 @@ var MNIAIService = (function () {
   }
 
   // 流式输出：非流式 fetch + NSTimer 分批推送（打字机效果）。
-  // 与前端 delta 事件同一通道，前端状态机零改动。
-  function runSimulatedStreaming(provider, route, prompt, handlers) {
+  // 与前端 delta 事件同一通道，前端状态机零改动。返回 { cancel() }。
+  function requestTyping(provider, body, handlers) {
     var state = {
       cancelled: false,
       typing: null // simulateTyping 返回的 { cancel() }
@@ -378,8 +378,7 @@ var MNIAIService = (function () {
       }
     }
 
-    var body = buildBody(provider, route.modelId, route, prompt);
-    console.log("[MNIAIService] request start (simulated stream): " + provider.name + " / " + route.modelId);
+    console.log("[MNIAIService] request start (simulated stream): " + provider.name + " / " + body.model);
 
     MNNetwork.fetch(endpointOf(provider), {
       method: "POST",
@@ -441,11 +440,47 @@ var MNIAIService = (function () {
       var config = MNIATSettings.load();
       var useStream = config.streamMode !== false;
 
+      var body = buildBody(provider, route.modelId, route, prompt);
       if (useStream) {
-        return runSimulatedStreaming(provider, route, prompt, handlers);
+        return requestTyping(provider, body, handlers);
       }
-      runOnce(provider, route, prompt, handlers);
+      requestOnce(provider, body, handlers);
       return { cancel: function () {} };
+    },
+
+    // AI 对话（长按机器人图标）：直接发送完整 messages（[{role:"user"|"assistant", content}]），
+    // 不经 prompt 模板渲染；路由使用 config.routing.chat（设置「模型路由 → AI 对话」）。
+    // 返回 { cancel() }；结果经 handlers.onDelta/onDone/onError 推送（打字机效果遵循 streamMode）。
+    runMessages: function (kind, messages, handlers) {
+      handlers = handlers || {};
+
+      var resolved = handlers.resolved || MNIATSettings.resolveRoute(kind);
+      var provider = resolved.provider;
+      var route = resolved.route;
+
+      if (!provider || !route.modelId) {
+        if (handlers.onError) {
+          handlers.onError("尚未配置 AI 对话路由，请先在设置「模型路由 → AI 对话」中选择提供商与模型");
+        }
+        return { cancel: function () {} };
+      }
+
+      var body = {
+        model: route.modelId,
+        messages: messages,
+        stream: false
+      };
+      if (typeof route.temperature === "number") {
+        body.temperature = route.temperature;
+      }
+      Object.assign(body, buildReasoningBody(provider, route.modelId, route));
+
+      var config = MNIATSettings.load();
+      if (config.streamMode === false) {
+        requestOnce(provider, body, handlers);
+        return { cancel: function () {} };
+      }
+      return requestTyping(provider, body, handlers);
     },
 
     // 打字机模拟（AI 翻译/解释与机器翻译共用）：

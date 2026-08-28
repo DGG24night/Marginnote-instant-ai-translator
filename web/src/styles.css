@@ -124,6 +124,13 @@ body {
   border-color: var(--danger);
 }
 
+/* 主操作按钮（如笔记「保存并创建卡片」）：主题色实底 */
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
 .btn-danger-solid {
   background: var(--danger);
   color: #ffffff;
@@ -1132,10 +1139,15 @@ html.card-fit .card-body {
   color: var(--text);
   font-size: 12px;
   outline: none;
+  /* UIWebView 老内核下原生光标偶发不可见：显式指定光标颜色（不支持时无副作用） */
+  caret-color: var(--accent);
+  -webkit-text-fill-color: var(--text);
+  transition: border-color 0.15s;
 }
 
 .card-search-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18); /* 聚焦可视提示：光标不可见时用户仍能确认已就绪 */
 }
 
 /* 搜索 / 重新生成 按钮：视觉上比复制、图钉略大，缩小到 15px 保持一致 */
@@ -2043,6 +2055,294 @@ html.card-fit .card-body {
   gap: 8px;
   /* 右下角原生缩放箭头（↘）会让位：右侧留出空隙，避免遮挡最右侧的「退出」按钮 */
   padding-right: 18px;
+}
+
+/* ---------- 笔记编辑界面（N 键 / 双击「添加」按钮进入） ---------- */
+
+/* 结构与拼接面板一致：tip / textarea（auto-grow）/ actions */
+.note-panel {
+  display: block;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.note-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+/* 笔记标题输入框：单行，位于提示与正文编辑区之间 */
+.note-title-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  margin-bottom: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 28px;
+  font-family: inherit;
+  caret-color: var(--accent);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.note-title-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.note-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 96px;
+  max-height: 356px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+  overflow-y: auto;
+  resize: none;
+  caret-color: var(--accent);
+}
+
+.note-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.note-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-right: 18px; /* 让位右下角原生缩放箭头 */
+}
+
+/* ---------- AI 对话界面（长按机器人图标进入） ---------- */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.chat-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.chat-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.chat-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 18px 0;
+}
+
+.chat-msg {
+  max-width: 92%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* AI 回答容器：气泡 + 操作行（复制 / 添加笔记 / 重新回答） */
+.chat-msg-wrap {
+  align-self: flex-start;
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-msg-wrap .chat-msg {
+  max-width: 100%;
+}
+
+.chat-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 2px;
+}
+
+.chat-act-btn .icon-svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.75;
+}
+
+.chat-act-btn:hover .icon-svg {
+  opacity: 1;
+}
+
+/* 对话模型选择按钮（输入框左侧）：显示当前生效模型，超长省略 */
+.chat-model-btn {
+  flex-shrink: 0;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chat-model-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 模型选择弹层底部「使用默认路由」按钮 */
+.model-picker-reset {
+  width: 100%;
+  text-align: center;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.chat-msg-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg-assistant {
+  align-self: flex-start;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-input-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-right: 18px; /* 让位右下角原生缩放箭头 */
+}
+
+.chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  font-family: inherit;
+  caret-color: var(--accent);
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+/* AI 回复中的 markdown 元素（与结果区一致的紧凑排版） */
+.chat-msg-assistant p {
+  margin: 0 0 6px;
+}
+
+.chat-msg-assistant p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-msg-assistant pre {
+  margin: 6px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.chat-msg-assistant code {
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.chat-msg-assistant ul,
+.chat-msg-assistant ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+/* 等待 AI 回复：三个连续跃动的点 */
+.chat-loading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 18px;
+}
+
+.chat-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  animation: mniat-chat-bounce 1.2s ease-in-out infinite;
+}
+
+.chat-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes mniat-chat-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
 }
 
 /* ---------- 配置备份与同步 ---------- */

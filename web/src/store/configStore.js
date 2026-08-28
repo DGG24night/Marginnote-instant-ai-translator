@@ -157,6 +157,9 @@ const EMPTY_CONFIG = {
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
+  shortcuts: { lookup: "d", note: "n", save: "alt+s", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" }, // 结果卡片内快捷键
+  noteIncludeResult: true, // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）
+  robotChatEnabled: true, // 机器人图标：长按进入 AI 对话
   cardColorTranslate: 0, // 「添加卡片」颜色索引 0-15（翻译任务）
   cardColorLookup: 0, // 「添加卡片」颜色索引 0-15（查词/AI 解释任务）
   translateService: "ai", // ai=AI 翻译 | machine=机器翻译（百度等开放平台）
@@ -166,8 +169,9 @@ const EMPTY_CONFIG = {
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
     lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
+    chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话（长按机器人图标）
   },
-  prompts: { translate: "", explain: "" },
+  prompts: { translate: "", explain: "", robotDouble: "" },
 };
 
 export const useConfigStore = create((set, get) => ({
@@ -234,7 +238,7 @@ export const useConfigStore = create((set, get) => ({
   removeProvider: async (providerId) => {
     await get().update((config) => {
       config.providers = config.providers.filter((p) => p.id !== providerId);
-      ["translate", "lookup"].forEach((kind) => {
+      ["translate", "lookup", "chat"].forEach((kind) => {
         if (config.routing[kind].providerId === providerId) {
           config.routing[kind] = { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" };
         }

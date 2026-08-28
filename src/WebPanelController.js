@@ -150,10 +150,9 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     const safeBounds = normalizeBounds(bounds);
     const fallback = createDefaultFrame(safeBounds);
     const source = frame || fallback;
-    const maxWidth = Math.max(320, safeBounds.width - PANEL_MARGIN * 2);
-    const maxHeight = Math.max(260, safeBounds.height - PANEL_MARGIN * 2);
-    const width = Math.min(Math.max(MIN_WIDTH, numberOr(source.width, fallback.width)), maxWidth);
-    const height = Math.min(Math.max(MIN_HEIGHT, numberOr(source.height, fallback.height)), maxHeight);
+    // 手动调整不设上限（无级调节，仅保留最小尺寸；超出屏幕时由 x/y 钳制锚到边缘）
+    const width = Math.max(MIN_WIDTH, numberOr(source.width, fallback.width));
+    const height = Math.max(MIN_HEIGHT, numberOr(source.height, fallback.height));
     const minX = safeBounds.x + PANEL_MARGIN;
     const minY = safeBounds.y + PANEL_MARGIN;
     const maxX = safeBounds.x + Math.max(PANEL_MARGIN, safeBounds.width - width - PANEL_MARGIN);

@@ -30,6 +30,15 @@ var MNIATSettings = (function () {
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
+      shortcuts: {                  // 结果卡片内快捷键（可在设置中自定义）
+        lookup: "d",                // 快速查词：聚焦搜索框，Enter 查询
+        note: "n",                  // 进入笔记编辑界面
+        save: "alt+s",              // 保存笔记并创建卡片（笔记编辑界面内）
+        historyPrev: "ArrowUp,ArrowLeft",   // 上一个历史记录（多个键逗号分隔）
+        historyNext: "ArrowDown,ArrowRight" // 下一个历史记录
+      },
+      noteIncludeResult: true,      // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）
+      robotChatEnabled: true,       // 机器人图标：长按进入 AI 对话
       cardColorTranslate: 0,        // 「添加卡片」颜色索引 0-15（翻译任务创建卡片时使用）
       cardColorLookup: 0,           // 「添加卡片」颜色索引 0-15（查词/AI 解释任务创建卡片时使用）
       translateService: "ai",       // 翻译引擎：ai=AI 翻译 | machine=机器翻译（百度/小牛/阿里云/腾讯等）
@@ -43,11 +52,13 @@ var MNIATSettings = (function () {
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
-        lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }
+        lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
+        chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" } // AI 对话（长按机器人图标）
       },
       prompts: {
         translate: "",              // 空串 = 使用内置默认模板
-        explain: ""
+        explain: "",                // AI 解释（机器人图标单击同用此模板）
+        robotDouble: ""             // 机器人图标双击 prompt（空串 = 内置默认，深度分析）
       }
     };
   }
@@ -80,7 +91,7 @@ var MNIATSettings = (function () {
       if (raw[key] !== undefined && raw[key] !== null) merged[key] = raw[key];
     }
 
-    ["translate", "lookup"].forEach(function (k) {
+    ["translate", "lookup", "chat"].forEach(function (k) {
       var r = (raw.routing && raw.routing[k]) || {};
       merged.routing[k] = {
         providerId: typeof r.providerId === "string" ? r.providerId : "",
@@ -92,8 +103,22 @@ var MNIATSettings = (function () {
 
     merged.prompts = {
       translate: (raw.prompts && typeof raw.prompts.translate === "string") ? raw.prompts.translate : "",
-      explain: (raw.prompts && typeof raw.prompts.explain === "string") ? raw.prompts.explain : ""
+      explain: (raw.prompts && typeof raw.prompts.explain === "string") ? raw.prompts.explain : "",
+      robotDouble: (raw.prompts && typeof raw.prompts.robotDouble === "string") ? raw.prompts.robotDouble : ""
     };
+
+    // 快捷键深兜底（老配置无该字段时给默认值；空串回落默认，避免快捷键失效）
+    var sc = (raw.shortcuts && typeof raw.shortcuts === "object") ? raw.shortcuts : {};
+    var scDefaults = { lookup: "d", note: "n", save: "alt+s", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" };
+    merged.shortcuts = {};
+    for (var sk in scDefaults) {
+      var sv = (typeof sc[sk] === "string" && sc[sk].trim()) ? sc[sk].trim() : scDefaults[sk];
+      merged.shortcuts[sk] = sv;
+    }
+
+    // 笔记/机器人开关深兜底（默认开启）
+    merged.noteIncludeResult = raw.noteIncludeResult === false ? false : true;
+    merged.robotChatEnabled = raw.robotChatEnabled === false ? false : true;
 
     // 选区上下文长度深兜底（老配置无该字段时给默认值 200；0 = 关闭上下文）
     merged.contextLength =
