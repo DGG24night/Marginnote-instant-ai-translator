@@ -61,6 +61,41 @@ var MNIATFlow = (function () {
     return countWords(text) > limit ? "translate" : "lookup";
   }
 
+  // 以「词」为单位向外扩展切片边界（上下文长度设置的单位）：
+  //   从 [start, end) 起止点向外各取 count 个词，返回 [left, right]（right 为排他下标）。
+  //   计词语义与 countWords 一致：西文 token（连续非空白段，含数字）整块算 1 词，
+  //   CJK 字符每字算 1 词；空白只作分隔不计词。选区本身不占词数配额。
+  function expandByWords(text, start, end, count) {
+    var CJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/;
+    var isSpace = /\s/;
+    var n = text.length;
+    // 向左扩展
+    var i = start;
+    var cnt = 0;
+    while (i > 0 && cnt < count) {
+      if (isSpace.test(text.charAt(i - 1))) { i--; continue; }
+      if (CJK.test(text.charAt(i - 1))) { cnt++; i--; continue; }
+      // 西文 token：整块吸收至空白/CJK 边界
+      var j = i - 1;
+      while (j > 0 && !isSpace.test(text.charAt(j - 1)) && !CJK.test(text.charAt(j - 1))) j--;
+      cnt++;
+      i = j;
+    }
+    var left = i;
+    // 向右扩展
+    var k = end;
+    cnt = 0;
+    while (k < n && cnt < count) {
+      if (isSpace.test(text.charAt(k))) { k++; continue; }
+      if (CJK.test(text.charAt(k))) { cnt++; k++; continue; }
+      var m = k;
+      while (m < n && !isSpace.test(text.charAt(m)) && !CJK.test(text.charAt(m))) m++;
+      cnt++;
+      k = m;
+    }
+    return [left, k];
+  }
+
   // ---------- 选区上下文提取（prompt {context} 变量） ----------
   //
   // ⚠️ 崩溃教训（2026-08-15 用户实测：划词闪退）：
@@ -274,7 +309,8 @@ var MNIATFlow = (function () {
     return 1;
   }
 
-  // 提取选区上下文：当前页文本层中定位选中文本，前后各取 contextLength 字符。
+  // 提取选区上下文：当前页文本层中定位选中文本，前后各取 contextLength 个词
+  // （英文按单词、中文按字计，expandByWords；0 = 不获取上下文）。
   // 返回 "" 表示未开启/定位失败（prompt 的 {context} 渲染为空，不影响请求）。
   // 开启但提取失败时弹一次性 HUD 诊断（console 日志在 MarginNote 不可见），便于排查。
   function extractContext(win, text) {
@@ -317,16 +353,14 @@ var MNIATFlow = (function () {
             "」（页文本长度 " + pageText.length + "），已降级为不注入", win, 3);
           return "";
         }
-        var start = Math.max(0, pos - len);
-        var end = Math.min(flat.length, pos + flatNeedle.length + len);
-        var ctxFlat = flat.slice(start, end).trim();
+        var boundsFlat = expandByWords(flat, pos, pos + flatNeedle.length, len);
+        var ctxFlat = flat.slice(boundsFlat[0], boundsFlat[1]).trim();
         console.log("[MNIATFlow] context extracted (flat): len=" + ctxFlat.length +
           ", head=" + ctxFlat.slice(0, 60));
         return ctxFlat;
       }
-      var start = Math.max(0, pos - len);
-      var end = Math.min(pageText.length, pos + needle.length + len);
-      var ctx = pageText.slice(start, end).trim();
+      var bounds = expandByWords(pageText, pos, pos + needle.length, len);
+      var ctx = pageText.slice(bounds[0], bounds[1]).trim();
       console.log("[MNIATFlow] context extracted: len=" + ctx.length + ", head=" + ctx.slice(0, 60));
       return ctx;
     } catch (e) {
@@ -431,6 +465,12 @@ var MNIATFlow = (function () {
         }
       }
     }
+
+    // 记录本次实际使用的 prompt/路由类型：「重新生成」据此沿用触发当前结果时的
+    // prompt（机器人单击=explain / 双击=robotDouble），双击后重新生成不再回落 AI 解释模板。
+    // routingKind 存的是已按配置回落的值（robotPrompt 中 robotDouble 路由未配置时已回落 lookup）。
+    job.promptKind = promptKind;
+    job.routingKind = routingKind;
 
     job.session = MNIAIService.run(routingKind, promptKind, job.text, {
       resolved: resolved, // 复用已解析的路由（含临时覆盖），避免内部二次解析导致键不一致
@@ -1121,8 +1161,13 @@ var MNIATFlow = (function () {
         currentJob.session.cancel();
         currentJob.session = null;
       }
-      var kind = currentJob.mode === "explain" ? "lookup" : "translate";
-      var promptKind = currentJob.mode === "explain" ? "explain" : "translate";
+      // prompt/路由沿用触发当前结果时实际使用的类型（runAI 已记录在 job 上）：
+      // 机器人单击产生的结果重新生成仍走 explain，双击产生的结果仍走 robotDouble；
+      // 旧任务/历史回放无记录时按 mode 兜底（explain → lookup+explain，translate → translate）。
+      var kind = currentJob.routingKind ||
+        (currentJob.mode === "explain" ? "lookup" : "translate");
+      var promptKind = currentJob.promptKind ||
+        (currentJob.mode === "explain" ? "explain" : "translate");
       pushEvent({ type: "reset" });
       pushEvent({ type: "loading", mode: currentJob.mode, text: currentJob.text });
 
