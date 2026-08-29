@@ -345,12 +345,30 @@ var MNIATFlow = (function () {
     return "c" + h.toString(36);
   }
 
-  // 解析有效路由（含「重新生成选模型」的临时覆盖）：
-  // override = { providerId, modelId }，覆盖的提供商/模型不存在时回落默认路由；
-  // 覆盖仅作用于本次请求，不写回 config.routing。
+  // 解析有效路由（含「重新生成选模型」/「AI 对话思考强度」的临时覆盖）：
+  // override = { providerId, modelId, reasoningEffort? }，覆盖的提供商/模型不存在时回落默认路由；
+  // reasoningEffort 仅 AI 对话使用（输入行思考强度列表），可单独出现（只调强度不换模型），
+  // 缺省时沿用路由配置值；覆盖仅作用于本次请求，不写回 config.routing。
   function resolveEffectiveRoute(kind, override) {
     var resolved = MNIATSettings.resolveRoute(kind);
-    if (!override || !override.providerId) return resolved;
+    var effort = (override && typeof override.reasoningEffort === "string" && override.reasoningEffort)
+      ? override.reasoningEffort
+      : (resolved.route ? resolved.route.reasoningEffort : undefined);
+    if (!override || !override.providerId) {
+      if (override && override.reasoningEffort != null && resolved.route) {
+        // 仅思考强度覆盖：提供商/模型仍走默认路由，返回 route 副本避免改动配置
+        return {
+          provider: resolved.provider,
+          route: {
+            providerId: resolved.route.providerId,
+            modelId: resolved.route.modelId,
+            temperature: resolved.route.temperature,
+            reasoningEffort: effort
+          }
+        };
+      }
+      return resolved;
+    }
     var providers = MNIATSettings.load().providers || [];
     for (var i = 0; i < providers.length; i++) {
       if (providers[i].id === override.providerId) {
@@ -363,7 +381,7 @@ var MNIATFlow = (function () {
             providerId: p.id,
             modelId: modelOk ? override.modelId : "",
             temperature: resolved.route.temperature,
-            reasoningEffort: resolved.route.reasoningEffort
+            reasoningEffort: effort
           }
         };
       }
@@ -1008,9 +1026,9 @@ var MNIATFlow = (function () {
     },
 
     // 机器人图标：单击 / 双击触发对应自定义 prompt（设置「Prompt 模板」中可改）。
-    // 文本 = 当前任务文本；路由 = AI 解释（lookup）路由；结果走 delta/translateResult
-    // 通道由前端打字机渲染。
-    // promptKey: "explain"（单击 = AI 解释模板，可缓存）| "robotDouble"（双击，不缓存）
+    // 文本 = 当前任务文本；结果走 delta/translateResult 通道由前端打字机渲染。
+    // promptKey: "explain"（单击 = AI 解释模板，可缓存，路由 = AI 解释）
+    //          | "robotDouble"（双击 = 长难句解释：路由优先「长难句解释」，未配置回落 AI 解释，不读写缓存）
     robotPrompt: function (promptKey) {
       if (promptKey !== "explain" && promptKey !== "robotDouble") {
         throw new Error("不支持的机器人 prompt: " + promptKey);
@@ -1025,16 +1043,22 @@ var MNIATFlow = (function () {
       // 标记为 explain 模式：前端显示「重新生成」按钮、发音按钮等按 AI 解释处理
       currentJob.mode = "explain";
       pushEvent({ type: "loading", mode: "explain", text: currentJob.text });
-      // 单击（explain）与 AI 解释同模板，允许读写缓存；双击（robotDouble）跳过缓存
-      runAI(currentJob, "lookup", promptKey, promptKey === "explain" ? {} : { bypassCache: true });
+      var routingKind = "lookup";
+      if (promptKey === "robotDouble") {
+        var rd = MNIATSettings.load().routing.robotDouble;
+        routingKind = (rd && rd.providerId) ? "robotDouble" : "lookup";
+      }
+      // 单击（explain）允许读写缓存；双击（robotDouble）跳过缓存
+      runAI(currentJob, routingKind, promptKey, promptKey === "explain" ? {} : { bypassCache: true });
       return { started: true };
     },
 
     // AI 对话（长按机器人图标）：messages = [{role:"user"|"assistant", content}] 完整历史，
     // 前端持有对话状态、每次发送全量历史；插件侧按 chat 路由请求并把回复推回前端
     // （chatDelta / chatDone / chatError 事件，与结果区 delta/translateResult 通道独立）。
-    // override = {providerId, modelId}：临时覆盖 chat 路由（输入框左侧模型选择 / 重新回答选模型），
-    // 不写回 config.routing.chat。
+    // override = {providerId, modelId}（模型临时覆盖，输入框左侧模型选择 / 重新回答选模型）
+    //            + 可选 reasoningEffort（思考强度临时覆盖，输入行思考强度列表，可单独出现），
+    // 均不写回 config.routing.chat。
     chatSend: function (messages, override) {
       if (!Array.isArray(messages) || messages.length === 0) {
         throw new Error("缺少对话消息");
@@ -1043,9 +1067,17 @@ var MNIATFlow = (function () {
         try { chatSession.cancel(); } catch (e) { /* 忽略 */ }
         chatSession = null;
       }
-      var ov = (override && override.providerId)
-        ? { providerId: String(override.providerId), modelId: String(override.modelId || "") }
-        : null;
+      var ov = null;
+      if (override && (override.providerId || override.reasoningEffort != null)) {
+        ov = {};
+        if (override.providerId) {
+          ov.providerId = String(override.providerId);
+          ov.modelId = String(override.modelId || "");
+        }
+        if (override.reasoningEffort != null) {
+          ov.reasoningEffort = String(override.reasoningEffort);
+        }
+      }
       chatSession = MNIAIService.runMessages("chat", messages, {
         resolved: ov ? resolveEffectiveRoute("chat", ov) : undefined,
         onDelta: function (delta, accumulated) {

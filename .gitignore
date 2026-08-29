@@ -8,3 +8,7 @@ src/web-dist/
 # 本地工具目录
 .dsh/
 .pnpm-store/
+
+# 本地工具与冒烟测试产物
+.zcode/
+web/.smoke-tmp/

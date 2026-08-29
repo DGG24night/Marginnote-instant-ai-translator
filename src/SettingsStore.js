@@ -34,11 +34,12 @@ var MNIATSettings = (function () {
         lookup: "d",                // 快速查词：聚焦搜索框，Enter 查询
         note: "n",                  // 进入笔记编辑界面
         save: "alt+s",              // 保存笔记并创建卡片（笔记编辑界面内）
+        chat: "c",                  // 进入 AI 问答（同长按机器人图标）
         historyPrev: "ArrowUp,ArrowLeft",   // 上一个历史记录（多个键逗号分隔）
         historyNext: "ArrowDown,ArrowRight" // 下一个历史记录
       },
       noteIncludeResult: true,      // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）
-      robotChatEnabled: true,       // 机器人图标：长按进入 AI 对话
+      chatHistorySize: 50,          // AI 问答历史容量：达到上限自动删除最早的记录（0 = 不保存历史）
       cardColorTranslate: 0,        // 「添加卡片」颜色索引 0-15（翻译任务创建卡片时使用）
       cardColorLookup: 0,           // 「添加卡片」颜色索引 0-15（查词/AI 解释任务创建卡片时使用）
       translateService: "ai",       // 翻译引擎：ai=AI 翻译 | machine=机器翻译（百度/小牛/阿里云/腾讯等）
@@ -53,12 +54,13 @@ var MNIATSettings = (function () {
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
         lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
-        chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" } // AI 对话（长按机器人图标）
+        chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话：对话界面切换模型时写入（= 上次使用的模型），设置页不再配置
+        robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" } // 长难句解释（双击机器人图标）：留空回落 AI 解释路由
       },
       prompts: {
         translate: "",              // 空串 = 使用内置默认模板
         explain: "",                // AI 解释（机器人图标单击同用此模板）
-        robotDouble: ""             // 机器人图标双击 prompt（空串 = 内置默认，深度分析）
+        robotDouble: ""             // 机器人图标双击 prompt（空串 = 内置默认，长难句解释）
       }
     };
   }
@@ -91,7 +93,7 @@ var MNIATSettings = (function () {
       if (raw[key] !== undefined && raw[key] !== null) merged[key] = raw[key];
     }
 
-    ["translate", "lookup", "chat"].forEach(function (k) {
+    ["translate", "lookup", "chat", "robotDouble"].forEach(function (k) {
       var r = (raw.routing && raw.routing[k]) || {};
       merged.routing[k] = {
         providerId: typeof r.providerId === "string" ? r.providerId : "",
@@ -109,16 +111,21 @@ var MNIATSettings = (function () {
 
     // 快捷键深兜底（老配置无该字段时给默认值；空串回落默认，避免快捷键失效）
     var sc = (raw.shortcuts && typeof raw.shortcuts === "object") ? raw.shortcuts : {};
-    var scDefaults = { lookup: "d", note: "n", save: "alt+s", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" };
+    var scDefaults = { lookup: "d", note: "n", save: "alt+s", chat: "c", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" };
     merged.shortcuts = {};
     for (var sk in scDefaults) {
       var sv = (typeof sc[sk] === "string" && sc[sk].trim()) ? sc[sk].trim() : scDefaults[sk];
       merged.shortcuts[sk] = sv;
     }
 
-    // 笔记/机器人开关深兜底（默认开启）
+    // 笔记附带结果开关深兜底（默认开启）
     merged.noteIncludeResult = raw.noteIncludeResult === false ? false : true;
-    merged.robotChatEnabled = raw.robotChatEnabled === false ? false : true;
+
+    // AI 问答历史容量深兜底（老配置无该字段时默认 50；0 = 不保存历史，上限 500）
+    merged.chatHistorySize =
+      typeof raw.chatHistorySize === "number" && raw.chatHistorySize >= 0
+        ? Math.min(Math.floor(raw.chatHistorySize), 500)
+        : 50;
 
     // 选区上下文长度深兜底（老配置无该字段时给默认值 200；0 = 关闭上下文）
     merged.contextLength =

@@ -157,9 +157,9 @@ const EMPTY_CONFIG = {
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
   rememberCardSize: false,
-  shortcuts: { lookup: "d", note: "n", save: "alt+s", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" }, // 结果卡片内快捷键
+  shortcuts: { lookup: "d", note: "n", save: "alt+s", chat: "c", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" }, // 结果卡片内快捷键
   noteIncludeResult: true, // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）
-  robotChatEnabled: true, // 机器人图标：长按进入 AI 对话
+  chatHistorySize: 50, // AI 问答历史容量：达到上限自动删除最早的记录（0 = 不保存历史）
   cardColorTranslate: 0, // 「添加卡片」颜色索引 0-15（翻译任务）
   cardColorLookup: 0, // 「添加卡片」颜色索引 0-15（查词/AI 解释任务）
   translateService: "ai", // ai=AI 翻译 | machine=机器翻译（百度等开放平台）
@@ -169,7 +169,8 @@ const EMPTY_CONFIG = {
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
     lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
-    chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话（长按机器人图标）
+    chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话：对话界面切换模型时写入（= 上次使用的模型），设置页不再配置
+    robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // 长难句解释（双击机器人图标）：留空回落 AI 解释路由
   },
   prompts: { translate: "", explain: "", robotDouble: "" },
 };
@@ -184,6 +185,8 @@ export const useConfigStore = create((set, get) => ({
     try {
       const config = await MNBridge.send("getConfig");
       const merged = { ...EMPTY_CONFIG, ...config };
+      // routing 深合并：老配置缺新路由组（如 robotDouble）时补默认值，避免 RouteEditor 读到 undefined
+      merged.routing = { ...EMPTY_CONFIG.routing, ...(merged.routing || {}) };
       // 防御性清理：移除 id 为空/无效的模型（曾因旧版 bug 写入空 id 行）
       const cleaned = sanitizeConfig(merged);
       set({ config: cleaned, loaded: true });
@@ -238,7 +241,7 @@ export const useConfigStore = create((set, get) => ({
   removeProvider: async (providerId) => {
     await get().update((config) => {
       config.providers = config.providers.filter((p) => p.id !== providerId);
-      ["translate", "lookup", "chat"].forEach((kind) => {
+      ["translate", "lookup", "chat", "robotDouble"].forEach((kind) => {
         if (config.routing[kind].providerId === providerId) {
           config.routing[kind] = { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" };
         }

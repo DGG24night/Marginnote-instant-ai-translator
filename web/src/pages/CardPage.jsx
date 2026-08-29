@@ -173,6 +173,40 @@ function AddIcon() {
   );
 }
 
+// 发送（用户提供的 fasong.svg：圆底 + 纸飞机，3 path，单色 currentColor）
+const SEND_PATHS = [
+  "M512 1015.873016c-278.267937 0-503.873016-225.605079-503.873016-503.873016 0-278.267937 225.605079-503.873016 503.873016-503.873016 278.267937 0 503.873016 225.605079 503.873016 503.873016 0 278.267937-225.605079 503.873016-503.873016 503.873016z m0-48.761905c251.351365 0 455.111111-203.759746 455.111111-455.111111s-203.759746-455.111111-455.111111-455.111111-455.111111 203.759746-455.111111 455.111111 203.759746 455.111111 455.111111 455.111111z",
+  "M410.201397 796.444444c-3.006984 0-6.013968-0.666413-9.037207-2.015492a22.674286 22.674286 0 0 1-13.702095-20.805079V606.630603c0-7.054222 3.006984-13.425778 8.695873-17.781841 5.347556-4.356063 12.36927-5.688889 19.407238-4.356064l232.171683 55.669842 46.827682-334.051556c0.666413-5.36381-4.681143-9.05346-9.362285-6.371555l-424.553651 246.507682 77.287619 19.797333c11.052698 2.681905 19.082159 12.743111 18.074413 24.153397a22.576762 22.576762 0 0 1-28.119365 20.122413l-132.144762-33.87327a22.576762 22.576762 0 0 1-16.70908-18.789587 22.658032 22.658032 0 0 1 11.036445-22.804318l523.556571-304.209269a23.080635 23.080635 0 0 1 24.088381 0.666412c7.037968 4.713651 11.052698 13.425778 9.703619 21.796572l-58.546793 417.922031a23.30819 23.30819 0 0 1-9.70362 15.76635c-5.347556 3.673397-11.702857 4.681143-18.058158 3.348317l-228.498286-54.678349v85.869714l45.511111-42.585397c8.35454-7.720635 21.065143-9.411048 30.102349-2.356825 11.377778 8.712127 11.702857 25.144889 1.674159 34.539682l-84.309333 79.481905a22.300444 22.300444 0 0 1-15.392508 6.046476z",
+  "M412.249397 617.650794c-5.250032 0-10.500063-1.999238-14.791111-5.656381a22.820571 22.820571 0 0 1-1.625397-31.939048l117.890032-133.721397a22.121651 22.121651 0 0 1 31.532698-1.674158c9.199746 8.322032 9.849905 22.625524 1.641651 31.939047l-117.890032 133.737651c-4.599873 4.989968-10.841397 7.314286-16.741587 7.314286z",
+];
+
+function SendIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {SEND_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
+// 新建对话（用户提供的 xinjian.svg：圆底 + 加号，3 path，单色 currentColor）
+const NEWCHAT_PATHS = [
+  "M500.48 106.1888a416.9728 416.9728 0 1 0 416.9728 416.9728 417.4336 417.4336 0 0 0-416.9728-416.9728z m0 767.6928a350.72 350.72 0 1 1 350.72-350.72 350.72 350.72 0 0 1-350.72 350.72z",
+  "M661.76 553.8816h-322.56a30.72 30.72 0 1 1 0-61.44h322.56a30.72 30.72 0 1 1 0 61.44z",
+  "M500.48 715.1616a30.72 30.72 0 0 1-30.72-30.72v-322.56a30.72 30.72 0 0 1 61.44 0v322.56a30.72 30.72 0 0 1-30.72 30.72z",
+];
+
+function NewChatIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {NEWCHAT_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
 // 复制（两层圆角矩形，单色 currentColor）：AI 对话回答气泡的操作按钮
 const COPY_PATHS = [
   "M832 896H320c-35.3 0-64-28.7-64-64V320c0-35.3 28.7-64 64-64h448c35.3 0 64 28.7 64 64v512c0 35.3-28.7 64-64 64z m-512-64h448V320H320v512z",
@@ -205,6 +239,19 @@ function smartJoin(prev, piece) {
   if (ended) return a + "\n" + b;
   return isCJK ? a + b : a + " " + b;
 }
+
+// AI 对话思考强度档位（与设置「模型路由 → Reasoning Effort」同一套值）。
+// 选择后持久化到 chat 路由；实际请求参数由插件侧 buildReasoningBody 按「厂商 + 模型」
+// 适配（thinking.type / reasoning_effort / enable_thinking / reasoning.effort 等）；
+// 是否可调由模型探测的 supportsReasoning 决定。
+const CHAT_EFFORT_OPTIONS = [
+  { value: "off", label: "关闭" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+];
+
+const CHAT_EFFORT_LABEL = { off: "关闭", low: "低", medium: "中", high: "高" };
 
 // ---------- 快捷键（结果卡片内，均可在设置中自定义） ----------
 // 配置格式："d" / "alt+s" / "ctrl+shift+p"（修饰键支持 alt/option、ctrl/control、shift、cmd/command/meta）；
@@ -276,9 +323,9 @@ function CardPage() {
   const [chatDraft, setChatDraft] = useState(""); // AI 回复流式草稿（chatDelta 累积）
   const [chatInput, setChatInput] = useState(""); // 对话输入框
   const [chatSending, setChatSending] = useState(false);
-  const [chatModelOverride, setChatModelOverride] = useState(null); // 对话模型临时覆盖 {providerId, modelId} | null（null = 默认 chat 路由）
   const [chatPickerOpen, setChatPickerOpen] = useState(false); // 对话模型选择弹层
   const [chatPickerTarget, setChatPickerTarget] = useState(null); // 弹层用途：null=切换模型 | 数字=重新回答该条回答的索引
+  const [chatEffortOpen, setChatEffortOpen] = useState(false); // 对话思考强度选择弹层（输入行「思考」按钮）
   const [searchFocusTick, setSearchFocusTick] = useState(0); // 搜索框聚焦重试触发器（D 键重复触发聚焦）
   const readySentRef = useRef(false);
   const audioRef = useRef(null);
@@ -298,7 +345,7 @@ function CardPage() {
   const pinTimerRef = useRef(null); // 图钉单击/双击判定计时器
   const prevPinnedRef = useRef(false); // 进入拼接模式前的 pinned 状态：「开始翻译」后据此决定是否恢复
   const appendTextareaRef = useRef(null); // 拼接编辑区（auto-grow 用）
-  const noteTextareaRef = useRef(null); // 笔记编辑区（auto-grow / 聚焦用）
+  const noteTextareaRef = useRef(null); // 笔记编辑区（聚焦用；高度由 flex 布局接管）
   const addTimerRef = useRef(null); // 「添加」按钮单击/双击判定计时器
   const robotTimerRef = useRef(null); // 机器人单击/双击判定计时器
   const robotPressTimerRef = useRef(null); // 机器人长按计时器（进入 AI 对话）
@@ -307,6 +354,7 @@ function CardPage() {
   const robotTouchCleanupRef = useRef(null); // 机器人按钮卸载时解绑原生 touch 监听
   const chatListRef = useRef(null); // 对话消息列表（滚动到底用）
   const chatPickerRef = useRef(null); // 对话模型选择弹层（测量高度用）
+  const chatEffortMenuRef = useRef(null); // 对话思考强度选择弹层（测量高度用）
   const chatAddTimerRef = useRef(null); // 对话「添加笔记」单击/双击判定计时器
   const reAnsTimerRef = useRef(null); // 「重新回答」长按计时器
   const reAnsLongRef = useRef(false); // 「重新回答」长按已触发（抑制随后的 click）
@@ -317,7 +365,7 @@ function CardPage() {
   const histNavIdxRef = useRef(-1); // 快捷键历史导航：当前所在索引（-1 = 未开始）
   const histNavAppliedRef = useRef(""); // 快捷键历史导航：最近应用条目的原文（区分历史回放与新任务）
   const shortcutsRef = useRef(null); // 最新快捷键处理函数（每次渲染重建，监听器只绑一次）
-  const { config, load } = useConfigStore();
+  const { config, load, update } = useConfigStore();
 
   // 显示发音提示，几秒后自动消失
   const showHint = useCallback((msg) => {
@@ -645,6 +693,7 @@ function CardPage() {
         setChatDraft("");
         setChatInput("");
         setChatSending(false);
+        setChatEffortOpen(false);
         // 快捷键历史导航：回放历史（文本与最近应用条目一致）保持索引，
         // 新任务（新选区/搜索词）重置为未开始。
         // 注意：仅依据 loading 事件判断（携带 text）；reset 事件不携带 text，
@@ -837,7 +886,9 @@ function CardPage() {
     const hintH = hintEl ? hintEl.offsetHeight : 0;
     let height = 0;
     if (noteOpen) {
-      // 笔记编辑界面：与拼接界面同法（tip + 标题框 + textarea + actions 自然高度 + padding）
+      // 笔记编辑界面：tip + 标题框 + textarea + actions 自然高度 + padding。
+      // textarea 取「内容高度钳制在 [96, 356]」——超出部分由 flex 布局内部滚动
+      // （见 .card-body.note-open .note-textarea），保证按钮行始终可见、不被遮住
       const panelEl = document.querySelector(".note-panel");
       const tipEl = panelEl ? panelEl.querySelector(".note-tip") : null;
       const titleEl = panelEl ? panelEl.querySelector(".note-title-input") : null;
@@ -847,19 +898,22 @@ function CardPage() {
       const tipH = tipEl ? tipEl.offsetHeight : 0;
       const titleH = titleEl ? titleEl.offsetHeight : 0;
       const actionsH = actionsEl ? actionsEl.offsetHeight : 0;
-      const taH = taEl ? Math.max(taEl.scrollHeight, taEl.offsetHeight, 96) : 96;
+      const taH = taEl ? Math.min(Math.max(taEl.scrollHeight, 96), 356) : 96;
       height = tipH + titleH + taH + actionsH + 24 + bodyPad + toolbarH + hintH;
     } else if (chatOpen) {
-      // AI 对话界面：tip + 消息列表（scrollHeight 不受 max-height 裁剪影响）+ 输入行
+      // AI 对话界面：tip + 消息列表（scrollHeight 不受 max-height 裁剪影响）
+      //   + 输入行（输入框+发送按钮，.chat-input-line）+ 间距(6) + 按钮行（模型/思考/新建对话/关闭）
       const panelEl = document.querySelector(".chat-panel");
       const tipEl = panelEl ? panelEl.querySelector(".chat-tip") : null;
       const listEl = panelEl ? panelEl.querySelector(".chat-list") : null;
+      const lineEl = panelEl ? panelEl.querySelector(".chat-input-line") : null;
       const rowEl = panelEl ? panelEl.querySelector(".chat-input-row") : null;
       const bodyPad = 24;
       const tipH = tipEl ? tipEl.offsetHeight : 0;
       const listH = listEl ? Math.max(listEl.scrollHeight, 120) : 120;
+      const inputH = lineEl ? lineEl.offsetHeight : 0;
       const rowH = rowEl ? rowEl.offsetHeight : 0;
-      height = tipH + listH + rowH + 16 + bodyPad + toolbarH + hintH;
+      height = tipH + listH + inputH + 6 + rowH + 16 + bodyPad + toolbarH + hintH;
     } else if (appendMode) {
       // 拼接模式：按「内容自然高度」计算，而不是 panel.offsetHeight。
       // panel 高度受卡片 maxHeight 钳制（flex 布局），文本越多 textarea 越早进入
@@ -902,6 +956,12 @@ function CardPage() {
     if (menuEl) {
       const menuBottom = 46 + menuEl.offsetHeight + 8;
       if (height < menuBottom) height = menuBottom;
+    }
+    // 思考强度弹层从输入行向上展开（底部锚定，距底约 58px）：
+    // 所需卡片高度 = 距底偏移 + 菜单高度 + 余量，避免矮卡片裁掉弹层顶部
+    if (chatEffortOpen && chatEffortMenuRef.current) {
+      const menuNeeded = 58 + chatEffortMenuRef.current.offsetHeight + 8;
+      if (height < menuNeeded) height = menuNeeded;
     }
     // 历史记录面板打开：卡片高度自适应历史记录数量。
     // 注意：不能量 .history-panel 自身的 scrollHeight —— 面板是 overflow:hidden 的
@@ -961,7 +1021,7 @@ function CardPage() {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, chatEffortOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending]);
 
 // 拼接模式：textarea 高度 auto-grow（基于 scrollHeight），到 CSS max-height 上限内部滚动。
   //   - onChange 触发的内容增长：见 onAppendChange，用 rAF 同步设 height；
@@ -1049,8 +1109,7 @@ function CardPage() {
   ), [config.cardColorTranslate, config.cardColorLookup]);
 
   // 「添加卡片」：把当前结果保存为一条新笔记（Markdown 模式默认开启）。
-  // 经 bridge 交给插件层在当前文档所属笔记本下创建；插件侧会调 dc.highlightFromSelection()
-  // 让原文自动高亮，并让新节点可点击跳转原文。
+  // 经 bridge 交给插件层在「当前打开的脑图」下创建一条文字卡片（标题+正文）。
   const addCard = useCallback(async () => {
     const parts = buildResultParts();
     if (!parts.title.trim() && !parts.body.trim()) {
@@ -1061,13 +1120,13 @@ function CardPage() {
     // （用户实测 2026-08-15：AI 解释输出 `**音标**\n---\n**释义**` 时 MN 排版混乱）
     const body = normalizeCardBody(parts.body);
     try {
-      await MNBridge.send("addCard", {
+      const res = await MNBridge.send("addCard", {
         title: parts.title,
         body,
         markdown: true,
         colorIndex: colorIndexForKind(parts.kind),
       });
-      showHint("已添加卡片到当前笔记本（原文已高亮）");
+      showHint(res && res.highlighted ? "已添加卡片到当前脑图（原文已高亮）" : "已添加卡片到当前脑图");
     } catch (error) {
       showHint(`添加卡片失败：${(error && error.message) || "请重试"}`);
     }
@@ -1098,16 +1157,9 @@ function CardPage() {
 
   // ---------- 笔记编辑界面（N 键 / 双击「添加」按钮进入） ----------
 
-  // 笔记编辑区高度 auto-grow（同拼接编辑区：scrollHeight 显式设 height，到 max-height 内部滚动）
-  const adjustNoteTextarea = useCallback(() => {
-    const ta = noteTextareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    const maxH = parseFloat(getComputedStyle(ta).maxHeight) || 356;
-    const target = Math.min(ta.scrollHeight, maxH);
-    ta.style.height = target + "px";
-    ta.scrollTop = ta.scrollHeight;
-  }, []);
+  // 编辑区高度由 flex 布局接管（.card-body.note-open .note-textarea）：
+  // 卡片手动放大时编辑区跟随撑满、缩小时内部滚动，按钮行固定在底部始终可见，
+  // 不再用 JS auto-grow（auto-grow 的显式 height 会与 flex 伸缩互相打架）。
 
   // 进入笔记编辑：按设置决定是否自动附带查词/翻译结果（或对话回答），
   // 附带时笔记添加在结果之后，以「---」分隔（上下各空一行，避免 MarginNote 渲染错误）。
@@ -1172,15 +1224,7 @@ function CardPage() {
 
   const onNoteChange = (e) => {
     setNoteText(e.target.value);
-    requestAnimationFrame(adjustNoteTextarea);
   };
-
-  // 笔记编辑区内容变化（非 onChange 触发，如进入编辑器时预填结果）：延迟量高
-  useEffect(() => {
-    if (!noteOpen) return undefined;
-    const t = setTimeout(adjustNoteTextarea, 16);
-    return () => clearTimeout(t);
-  }, [noteText, noteOpen, adjustNoteTextarea]);
 
   // ---------- 机器人图标：单击/双击触发不同 prompt，长按进入 AI 对话 ----------
 
@@ -1218,7 +1262,17 @@ function CardPage() {
     setChatDraft("");
     setChatInput("");
     setChatSending(false);
+    setChatEffortOpen(false);
   }, []);
+
+  // 新建对话：清空当前消息与流式草稿（已保存的历史不受影响），输入框保留选中内容，
+  // 下一条消息从新对话开始；回复中禁用（避免流式增量把刚清空的界面又填回来）
+  const startNewChat = useCallback(() => {
+    if (chatSending) return;
+    setChatMessages([]);
+    setChatDraft("");
+    setChatEffortOpen(false);
+  }, [chatSending]);
 
   const sendChat = useCallback(async () => {
     const text = chatInput.trim();
@@ -1228,26 +1282,42 @@ function CardPage() {
     setChatInput("");
     setChatSending(true);
     try {
-      // 前端持有对话状态，每次发送全量历史；回复经 chatDelta/chatDone/chatError 事件推回
+      // 前端持有对话状态，每次发送全量历史；回复经 chatDelta/chatDone/chatError 事件推回。
+      // 模型/思考强度不随请求覆盖：插件侧读 chat 路由（对话界面切换时已持久化）
       await MNBridge.send("chatSend", {
         messages: msgs.map((m) => ({ role: m.role, content: m.text })),
-        override: chatModelOverride || undefined,
       });
     } catch (e) {
       setChatSending(false);
       showHint(`发送失败：${(e && e.message) || "请重试"}`);
     }
-  }, [chatInput, chatMessages, chatSending, chatModelOverride, showHint]);
+  }, [chatInput, chatMessages, chatSending, showHint]);
 
-  // ---------- AI 对话：模型选择 / 重新回答 / 回答操作 ----------
+  // ---------- AI 对话：模型选择 / 思考强度 / 重新回答 / 回答操作 ----------
 
-  // 当前生效的对话模型（临时覆盖 > 设置 chat 路由），用于按钮显示
+  // 当前生效的对话模型与思考强度（持久化在 chat 路由：对话界面切换时写入，= 上次使用）
   const chatRoute = (config.routing && config.routing.chat) || {};
-  const chatModelId = (chatModelOverride && chatModelOverride.modelId) || chatRoute.modelId || "";
-  const chatModelShort = chatModelId ? chatModelId.split("/").pop() : "默认";
+  const chatModelId = chatRoute.modelId || "";
+  const chatModelShort = chatModelId ? chatModelId.split("/").pop() : "未选择";
+
+  const chatEffort = chatRoute.reasoningEffort || "off";
+
+  // 当前模型是否「确认」支持思考（与设置页同一判定：模型经「测试」探测
+  // supportsReasoning === true 才放开；false = 探测不支持，null/未知 = 未探测）。
+  // 未确认支持的模型禁用思考强度按钮，避免发出厂商不认识的思考参数导致 400。
+  const chatEffortProvider = config.providers.find((p) => p.id === chatRoute.providerId);
+  const chatEffortModel = chatEffortProvider &&
+    chatEffortProvider.models.find((m) => m.id === chatModelId);
+  const chatModelSupportsReasoning = !!(chatEffortProvider && chatEffortModel &&
+    chatEffortModel.supportsReasoning === true);
+
+  // AI 对话面板是否可见：笔记编辑界面打开时隐藏对话（双击回答「添加笔记」进入编辑时
+  // 不再在编辑框下方露出之前的对话）；退出编辑后对话恢复（消息保留可继续追问）。
+  // 注意：historyKind / modeLabel 等都在本组件更靠前的位置引用，必须在此处（首次使用前）定义
+  const chatPanelVisible = chatOpen && !noteOpen;
 
   // 重新回答第 index 条回答：截断该条之前的对话（含触发它的提问）重新发送
-  const reAnswerAt = useCallback(async (index, ov) => {
+  const reAnswerAt = useCallback(async (index) => {
     const prefix = chatMessages.slice(0, index).filter((m) => m && (m.role === "user" || m.role === "assistant"));
     if (prefix.length === 0) return;
     setChatMessages(prefix);
@@ -1256,22 +1326,36 @@ function CardPage() {
     try {
       await MNBridge.send("chatSend", {
         messages: prefix.map((m) => ({ role: m.role, content: m.text })),
-        override: ov || chatModelOverride || undefined,
       });
     } catch (e) {
       setChatSending(false);
       showHint(`重新回答失败：${(e && e.message) || "请重试"}`);
     }
-  }, [chatMessages, chatModelOverride, showHint]);
+  }, [chatMessages, showHint]);
 
-  // 模型选择弹层确认：providerId 为空 = 恢复默认路由；target 非空时同时触发该条重新回答
-  const pickChatModel = (providerId, modelId) => {
+  // 模型选择弹层确认：写入 chat 路由并持久化（= 上次使用的模型，跨会话记忆）；
+  // target 非空时同时触发该条重新回答（await 持久化完成，保证插件读到新路由）
+  const pickChatModel = async (providerId, modelId) => {
     setChatPickerOpen(false);
     const target = chatPickerTarget;
     setChatPickerTarget(null);
-    const ov = providerId ? { providerId, modelId } : null;
-    setChatModelOverride(ov);
-    if (target != null) reAnswerAt(target, ov);
+    await update((c) => {
+      c.routing.chat = {
+        providerId: providerId || "",
+        modelId: modelId || "",
+        temperature: (c.routing.chat && c.routing.chat.temperature) || 0.3,
+        reasoningEffort: (c.routing.chat && c.routing.chat.reasoningEffort) || "off",
+      };
+    });
+    if (target != null) reAnswerAt(target);
+  };
+
+  // 思考强度弹层确认：写入 chat 路由并持久化（随下一次对话请求生效）
+  const pickChatEffort = (value) => {
+    setChatEffortOpen(false);
+    update((c) => {
+      if (c.routing.chat) c.routing.chat.reasoningEffort = value;
+    });
   };
 
   // 回答气泡 → 笔记内容：标题取该回答前面的最近提问（无则当前任务文本），正文为回答全文
@@ -1305,13 +1389,13 @@ function CardPage() {
       return;
     }
     try {
-      await MNBridge.send("addCard", {
+      const res = await MNBridge.send("addCard", {
         title,
         body: normalizeCardBody(body),
         markdown: true,
         colorIndex: colorIndexForKind("lookup"),
       });
-      showHint("已添加卡片到当前笔记本");
+      showHint(res && res.highlighted ? "已添加卡片到当前脑图（原文已高亮）" : "已添加卡片到当前脑图");
     } catch (error) {
       showHint(`添加卡片失败：${(error && error.message) || "请重试"}`);
     }
@@ -1434,9 +1518,7 @@ function CardPage() {
 
   const robotLongPressFire = () => {
     robotLongFiredRef.current = true;
-    if (useConfigStore.getState().config.robotChatEnabled !== false) {
-      openChatRef.current();
-    }
+    openChatRef.current(); // 长按进入 AI 对话：功能常开（设置开关已移除）
   };
 
   // 鼠标路径：mousedown 起长按计时；click 经 280ms 延迟与双击区分；长按后抑制 click
@@ -1625,9 +1707,9 @@ function CardPage() {
     }
   }, [state.mode, showHint]);
 
-  // ---------- 快捷键统一入口（D / N / Option+S / 方向键，设置中可自定义） ----------
+  // ---------- 快捷键统一入口（D / N / C / Option+S / 方向键，设置中可自定义） ----------
 
-  // D：聚焦搜索框（Enter 查询走搜索框已有逻辑）；N：进入笔记编辑；
+  // D：聚焦搜索框（Enter 查询走搜索框已有逻辑）；N：进入笔记编辑；C：进入 AI 对话；
   // Option+S：保存笔记并创建卡片（仅笔记编辑界面内生效，且需拦截避免输入特殊字符）；
   // 上/左、下/右：历史导航。输入框/编辑区内（除 Option+S）不触发，避免误伤打字。
   shortcutsRef.current = (e) => {
@@ -1666,6 +1748,11 @@ function CardPage() {
     if (matchShortcut(e, parseShortcut(sc.note || "n"))) {
       e.preventDefault();
       openNoteEditor();
+      return;
+    }
+    if (matchShortcut(e, parseShortcut(sc.chat || "c"))) {
+      e.preventDefault();
+      openChatRef.current(); // 同长按机器人图标：进入 AI 对话
     }
   };
 
@@ -1727,7 +1814,7 @@ function CardPage() {
   // ---------- 历史记录（数据源 = 查词/翻译缓存） ----------
 
   // 当前界面对应的历史类型：AI 问答（对话界面）/ 查词（含 AI 解释）/ 翻译，各自独立
-  const historyKind = chatOpen
+  const historyKind = chatPanelVisible
     ? "chat"
     : (state.mode === "translate" ? "translate" : "lookup");
 
@@ -1892,7 +1979,7 @@ const onAppendChange = (e) => {
   };
 
   // 对话界面时工具栏左侧文字切换为「AI问答」（历史按钮提示随之变化）
-  const modeLabel = chatOpen
+  const modeLabel = chatPanelVisible
     ? "AI问答"
     : (state.mode === "lookup" ? "查词" : state.mode === "explain" ? "AI 解释" : "翻译");
 
@@ -2025,7 +2112,7 @@ const onAppendChange = (e) => {
               <button
                 ref={bindRobotTouch}
                 className="icon-btn robot-btn"
-                title="单击：AI 解释；双击：深度分析；长按：AI 对话（可在设置中自定义）"
+                title="单击：AI 解释；双击：长难句解释；长按或按 C：AI 对话"
                 onMouseDown={onRobotMouseDown}
                 onMouseUp={onRobotMouseUp}
                 onMouseLeave={onRobotMouseLeave}
@@ -2062,7 +2149,17 @@ const onAppendChange = (e) => {
         <div className="pronounce-hint" role="status">{pronounceHint}</div>
       )}
 
-      <div className="card-body" onDoubleClick={copyResult} title="双击复制结果">
+      {/* chat-open / note-open：card-body 转纵向 flex（见 styles.css），
+          卡片被手动拉大/缩小时对话输入区与笔记编辑面板跟随伸缩、按钮行贴住卡片底部 */}
+      <div
+        className={
+          "card-body" +
+          (chatPanelVisible ? " chat-open" : "") +
+          (noteOpen ? " note-open" : "")
+        }
+        onDoubleClick={copyResult}
+        title="双击复制结果"
+      >
         {appendMode && (
           <div className="append-panel" onDoubleClick={(e) => e.stopPropagation()}>
             <div className="append-tip">
@@ -2114,7 +2211,7 @@ const onAppendChange = (e) => {
               autoCapitalize="off"
             />
             <div className="note-actions">
-              <button className="btn btn-sm" onClick={() => { setNoteText(""); requestAnimationFrame(adjustNoteTextarea); }}>清空笔记</button>
+              <button className="btn btn-sm" onClick={() => setNoteText("")}>清空笔记</button>
               <button className="btn btn-sm btn-primary" onClick={saveNote}>
                 保存并创建卡片
               </button>
@@ -2123,8 +2220,9 @@ const onAppendChange = (e) => {
           </div>
         )}
         {/* AI 对话界面（长按机器人图标进入）：选中文本已自动填入输入框，
-            对话走「模型路由 → AI 对话」配置的提供商与模型 */}
-        {chatOpen && (
+            模型/思考强度走 chat 路由（上次使用的，输入行可切换并持久化）；
+            笔记编辑界面打开时隐藏（chatPanelVisible） */}
+        {chatPanelVisible && (
           <div className="chat-panel" onDoubleClick={(e) => e.stopPropagation()}>
             <div className="chat-tip">AI 对话：基于选中内容继续提问（回车发送）</div>
             <div className="chat-list" ref={chatListRef}>
@@ -2188,35 +2286,77 @@ const onAppendChange = (e) => {
                 />
               )}
             </div>
-            <div className="chat-input-row">
-              {/* 模型选择：显示当前生效模型（临时覆盖 > 默认路由），点击切换 */}
-              <button
-                className="chat-model-btn"
-                title={`AI 对话模型：${chatModelId || "默认路由（设置 → 模型路由 → AI 对话）"}，点击切换`}
-                onClick={() => {
-                  load(); // 打开前刷新提供商/模型列表（设置页可能已改）
-                  setChatPickerTarget(null);
-                  setChatPickerOpen(true);
-                }}
-              >
-                {chatModelShort}
-              </button>
-              <input
-                className="chat-input"
-                value={chatInput}
-                placeholder="输入问题，回车发送…"
-                spellCheck={false}
-                autoCorrect="off"
-                autoCapitalize="off"
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") sendChat();
-                }}
-              />
-              <button className="btn btn-sm" onClick={sendChat} disabled={chatSending || !chatInput.trim()}>
-                {chatSending ? "回复中…" : "发送"}
-              </button>
-              <button className="btn btn-sm" onClick={closeChat}>关闭</button>
+            {/* 输入区：第一行 = 输入框 + 发送按钮；第二行 = 模型/思考 + 新建对话/关闭 */}
+            <div className="chat-input-area">
+              <div className="chat-input-line">
+                <input
+                  className="chat-input"
+                  value={chatInput}
+                  placeholder="输入问题，回车发送…"
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") sendChat();
+                  }}
+                />
+                {/* 发送：fasong.svg 发送图标，位于输入框右侧 */}
+                <button
+                  className="icon-btn chat-send-btn"
+                  title={chatSending ? "回复中…" : "发送"}
+                  disabled={chatSending || !chatInput.trim()}
+                  onClick={sendChat}
+                >
+                  <SendIcon />
+                </button>
+              </div>
+              <div className="chat-input-row">
+                {/* 模型选择：显示当前生效模型，点击切换；选择持久化 = 上次使用的模型 */}
+                <button
+                  className="chat-model-btn"
+                  title={`AI 对话模型：${chatModelId || "未选择"}，点击切换（记住上次选择）`}
+                  onClick={() => {
+                    load(); // 打开前刷新提供商/模型列表（设置页可能已改）
+                    setChatPickerTarget(null);
+                    setChatEffortOpen(false);
+                    setChatPickerOpen(true);
+                  }}
+                >
+                  {chatModelShort}
+                </button>
+                {/* 思考强度：显示当前生效档位，点击弹列表；选择持久化。
+                    仅「测试」探测确认支持思考的模型可调（与设置页同一判定），
+                    实际请求参数由插件侧按厂商/模型适配 */}
+                <button
+                  className="chat-model-btn chat-effort-btn"
+                  disabled={!chatModelSupportsReasoning}
+                  title={chatModelSupportsReasoning
+                    ? `思考强度：${CHAT_EFFORT_LABEL[chatEffort] || chatEffort}，点击调整（记住上次选择）`
+                    : "当前模型未确认支持思考（设置 → 服务提供商 → 测试可探测），不可调整"}
+                  onClick={() => {
+                    setChatPickerOpen(false);
+                    setChatPickerTarget(null);
+                    setChatEffortOpen(true);
+                  }}
+                >
+                  思考：{CHAT_EFFORT_LABEL[chatEffort] || chatEffort}
+                </button>
+                {/* 弹性占位：新建对话/关闭靠右 */}
+                <span className="chat-input-spacer" />
+                {/* 新建对话：xinjian.svg 圆底加号图标；清空当前消息开始新对话（历史记录保留） */}
+                <button
+                  className="icon-btn chat-newchat-btn"
+                  title="新建对话：清空当前消息（已存历史不受影响），输入框保留"
+                  disabled={chatSending}
+                  onClick={startNewChat}
+                >
+                  <NewChatIcon />
+                </button>
+                <button className="icon-btn chat-close-btn" title="关闭对话" onClick={closeChat}>
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2445,13 +2585,30 @@ const onAppendChange = (e) => {
                 )}
               </div>
             ))}
-            <button
-              className="model-picker-item model-picker-reset"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => pickChatModel(null, "")}
-            >
-              使用默认路由（设置 → 模型路由 → AI 对话）
-            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 思考强度选择（输入行「思考」按钮）：列表展示档位，写入 chat 路由持久化，
+          实际请求参数由插件侧按厂商/模型适配；弹层锚在输入行上方（向上展开） */}
+      {chatEffortOpen && (
+        <div className="menu-overlay" onMouseDown={() => setChatEffortOpen(false)}>
+          <div
+            className="switch-menu chat-effort-menu"
+            ref={chatEffortMenuRef}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="switch-menu-title">思考强度（记住上次选择）</div>
+            {CHAT_EFFORT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                className={"switch-menu-item" + (chatEffort === opt.value ? " is-current" : "")}
+                onClick={() => pickChatEffort(opt.value)}
+              >
+                <span className="switch-menu-label">{opt.label}</span>
+                {chatEffort === opt.value && <span className="switch-menu-check">✓</span>}
+              </button>
+            ))}
           </div>
         </div>
       )}

@@ -606,8 +606,16 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
         sendBridgeResponse(webView, message.requestId, result, null);
         return false;
       } catch (error) {
+        // 同步命令抛错时也必须按真实 requestId 回包（回 "unknown" 会让前端 Promise 永远挂起）
+        let errId = "unknown";
+        try {
+          const errAbs = String(request.URL().absoluteString());
+          const errSeg = errAbs.slice(errAbs.indexOf("payload=") + 8);
+          const errMsg = JSON.parse(decodeURIComponent(errSeg));
+          if (errMsg && errMsg.requestId) errId = errMsg.requestId;
+        } catch (e2) { /* URL 不完整时保留 "unknown" */ }
         const bridgeError = normalizeBridgeError(error, "unknown");
-        sendBridgeResponse(webView, "unknown", null, bridgeError);
+        sendBridgeResponse(webView, errId, null, bridgeError);
         console.log(`[WebAddon] bridge error: ${bridgeError.message}`);
         return false;
       }

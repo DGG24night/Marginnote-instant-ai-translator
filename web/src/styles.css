@@ -399,14 +399,6 @@ body {
   flex: 1;
 }
 
-/* 双开关下方说明文字 */
-.dual-toggle-hint {
-  margin: 10px 2px 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
 .section {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -2059,11 +2051,31 @@ html.card-fit .card-body {
 
 /* ---------- 笔记编辑界面（N 键 / 双击「添加」按钮进入） ---------- */
 
-/* 结构与拼接面板一致：tip / textarea（auto-grow）/ actions */
+/* 结构：tip / 标题框 / textarea（弹性伸缩）/ actions（固定底部） */
 .note-panel {
-  display: block;
+  display: flex;
+  flex-direction: column;
   max-height: 100%;
   overflow: hidden;
+}
+
+/* 卡片手动缩放时笔记面板跟随：card-body 转纵向 flex，note-panel 撑满可用高度，
+   编辑区弹性伸缩（内部滚动）、按钮行固定在底部，不再出现按钮被遮住/大片留白 */
+.card-body.note-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.card-body.note-open .note-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 编辑区吸收多余/不足空间：放大跟随撑满（可写更多内容），缩小内部滚动保按钮可见 */
+.card-body.note-open .note-textarea {
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: none;
 }
 
 .note-tip {
@@ -2139,6 +2151,24 @@ html.card-fit .card-body {
   flex-direction: column;
   max-height: 100%;
   overflow: hidden;
+}
+
+/* 卡片手动缩放时输入区贴底：card-body 转纵向 flex，chat-panel 撑满可用高度，
+   消息列表（flex:1）吸收多余/不足空间（内部滚动），输入区（输入框 + 模型/思考/发送/关闭按钮行）
+   始终固定在卡片底部 */
+.card-body.chat-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.card-body.chat-open .chat-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 卡片被缩小到内容高度以下时，列表先收缩滚动，保证输入行不被挤出可视区 */
+.card-body.chat-open .chat-list {
+  min-height: 0;
 }
 
 .chat-tip {
@@ -2252,17 +2282,28 @@ html.card-fit .card-body {
   border-bottom-left-radius: 4px;
 }
 
-.chat-input-row {
+/* 对话输入区（输入框独占一行 + 按钮行）：让输入框有完整宽度 */
+.chat-input-area {
   margin-top: 8px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
   flex-shrink: 0;
   padding-right: 18px; /* 让位右下角原生缩放箭头 */
 }
 
+/* 输入区第一行：输入框占满 + 发送按钮居右（对齐输入框垂直居中） */
+.chat-input-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .chat-input {
+  display: block;
+  box-sizing: border-box;
   flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -2275,10 +2316,60 @@ html.card-fit .card-body {
   caret-color: var(--accent);
 }
 
+/* 输入行内的发送按钮：点击区与按钮行图标按钮一致 */
+.chat-input-line .icon-btn {
+  padding: 5px 8px;
+}
+
+.chat-input-line .icon-btn .icon-svg {
+  width: 18px;
+  height: 18px;
+}
+
 .chat-input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+/* 按钮行：模型/思考 + 新建对话/关闭（新建对话/关闭靠右，让位缩放箭头由父级 padding 处理） */
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.chat-input-spacer {
+  flex: 1 1 auto;
+}
+
+/* 对话按钮行图标按钮（新建对话/关闭）：稍大的点击区，与输入框高度协调 */
+.chat-input-row .icon-btn {
+  padding: 5px 8px;
+}
+
+.chat-input-row .icon-btn .icon-svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 思考强度按钮：与模型按钮同款（chat-model-btn），禁用态降低透明度 */
+.chat-effort-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+/* 思考强度选择弹层：复用 .switch-menu 外观，锚在输入行上方（右下角、向上展开）；
+   top/left 覆盖 .switch-menu 的默认左上定位 */
+.chat-effort-menu {
+  top: auto;
+  left: auto;
+  right: 26px;  /* 让位右下角原生缩放箭头 */
+  bottom: 58px; /* card-body 底 padding(12) + 输入行高(~34) + 间距 */
+  min-width: 172px;
 }
 
 /* AI 回复中的 markdown 元素（与结果区一致的紧凑排版） */

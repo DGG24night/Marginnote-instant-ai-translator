@@ -293,7 +293,17 @@ var MNIATFloatingCard = (function () {
         sendBridgeResponse(webView, message.requestId, result, null);
         return false;
       } catch (error) {
-        sendBridgeResponse(webView, "unknown", null, {
+        // 同步命令抛错时也必须按真实 requestId 回包：
+        // 前端 pending 表按 requestId 索引，回 "unknown" 会让对应 Promise 永远挂起，
+        // 表现为命令静默失败、界面无任何提示（如「保存并创建卡片」点了没反应）
+        var errId = "unknown";
+        try {
+          var errAbs = String(request.URL().absoluteString());
+          var errSeg = errAbs.slice(errAbs.indexOf("payload=") + 8);
+          var errMsg = JSON.parse(decodeURIComponent(errSeg));
+          if (errMsg && errMsg.requestId) errId = errMsg.requestId;
+        } catch (e2) { /* URL 不完整时保留 "unknown" */ }
+        sendBridgeResponse(webView, errId, null, {
           message: String((error && error.message) || error),
           command: "unknown"
         });

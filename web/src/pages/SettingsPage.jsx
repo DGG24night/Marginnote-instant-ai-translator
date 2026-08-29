@@ -1042,7 +1042,8 @@ function MachineProviderCard({ mp, idx, dragProps, listRef }) {
 
 // ---------- 路由配置 ----------
 
-function RouteEditor({ kind, title }) {
+// kind: "translate" | "lookup" | "robotDouble"（路由配置组；具名导出供渲染冒烟测试使用）
+export function RouteEditor({ kind, title, hint }) {
   const { config, update } = useConfigStore();
   const route = config.routing[kind];
   const provider = config.providers.find((p) => p.id === route.providerId);
@@ -1051,6 +1052,7 @@ function RouteEditor({ kind, title }) {
   return (
     <div className="route-editor">
       <h3 className="route-title">{title}</h3>
+      {hint && <p className="field-hint" style={{ marginTop: -4, marginBottom: 8 }}>{hint}</p>}
       <div className="route-grid">
         <Field label="提供商">
           <select
@@ -1164,11 +1166,6 @@ function PromptEditor({ promptKey, title }) {
           update((config) => { config.prompts[promptKey] = e.target.value; })
         }
       />
-      <p className="field-hint">
-        留空则使用默认模板。可用变量：<code>{"{text}"}</code> 选中文本、
-        <code>{"{target_lang}"}</code> 目标语言、
-        <code>{"{context}"}</code> 选区上下文（前后文，长度在「常规」设置中配置，0 时不注入）。
-      </p>
     </div>
   );
 }
@@ -1340,7 +1337,7 @@ function SettingsPage() {
   const [mtPresetIndex, setMtPresetIndex] = useState(0);
   const [activeTab, setActiveTab] = useState("general");
   const [aiProvidersOpen, setAiProvidersOpen] = useState(false); // AI 服务提供商默认折叠
-  const [mtOpen, setMtOpen] = useState(true);                     // 机器翻译服务默认展开
+  const [mtOpen, setMtOpen] = useState(false);                    // 机器翻译服务默认折叠
 
   // 提供商 / 机器翻译服务 拖拽排序（bar 图标手柄；顺序持久化，长按「重新生成」列表同步）
   const providerListRef = useRef(null);
@@ -1394,9 +1391,6 @@ function SettingsPage() {
           </span>
         </button>
       </div>
-      <p className="dual-toggle-hint">
-        查词：选中单词时查词典；翻译：选中句子/段落时 AI 翻译。仅开启查词时，选中句子不会触发翻译。
-      </p>
 
       <nav className="settings-tabs">
         {SETTINGS_TABS.map((tab) => (
@@ -1516,7 +1510,8 @@ function SettingsPage() {
               快捷键
               <Hint>
                 结果卡片打开时生效：快速查词 = 聚焦搜索框（Enter 查询）；笔记编辑 = 进入笔记界面；
-                保存笔记 = 笔记界面内保存并创建卡片；上/下一历史 = 切换查词/翻译历史记录。
+                保存笔记 = 笔记界面内保存并创建卡片；AI 问答 = 进入 AI 对话（同长按机器人图标）；
+                上/下一历史 = 切换查词/翻译历史记录。
                 格式：单键（如 d）或组合键（如 alt+s，支持 alt/ctrl/shift/cmd）；
                 历史切换键可填多个，用英文逗号分隔。
               </Hint>
@@ -1543,6 +1538,18 @@ function SettingsPage() {
                   autoCapitalize="off"
                   onChange={(e) =>
                     update((c) => { c.shortcuts = { ...(c.shortcuts || {}), note: e.target.value }; })
+                  }
+                />
+              </Field>
+              <Field label="AI 问答（同长按机器人）">
+                <input
+                  className="input"
+                  value={(config.shortcuts && config.shortcuts.chat) || "c"}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  onChange={(e) =>
+                    update((c) => { c.shortcuts = { ...(c.shortcuts || {}), chat: e.target.value }; })
                   }
                 />
               </Field>
@@ -1584,8 +1591,29 @@ function SettingsPage() {
               </Field>
             </div>
 
-            {/* ===== 笔记与机器人 ===== */}
-            <h3 className="subsection-title">笔记与机器人</h3>
+            {/* ===== AI问答 ===== */}
+            <h3 className="subsection-title">AI问答</h3>
+            <div className="route-grid">
+              <Field
+                label="AI问答历史数量"
+                hint="与 AI 的每轮问答会自动保存到历史记录（结果卡片历史按钮查看），达到该数量后自动删除最早的记录。设为 0 表示不保存历史。"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  max="500"
+                  step="1"
+                  value={config.chatHistorySize}
+                  onChange={(e) =>
+                    update((c) => {
+                      const v = parseInt(e.target.value, 10);
+                      c.chatHistorySize = isNaN(v) || v < 0 ? 0 : Math.min(v, 500);
+                    })
+                  }
+                />
+              </Field>
+            </div>
             <div className="checkbox-grid">
               <label className="checkbox">
                 <input
@@ -1593,15 +1621,7 @@ function SettingsPage() {
                   checked={config.noteIncludeResult !== false}
                   onChange={(e) => update((c) => { c.noteIncludeResult = e.target.checked; })}
                 />
-                笔记自动附带查词/翻译结果（以 --- 分隔）
-              </label>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={config.robotChatEnabled !== false}
-                  onChange={(e) => update((c) => { c.robotChatEnabled = e.target.checked; })}
-                />
-                长按机器人图标进入 AI 对话
+                笔记附带查词/翻译结果
               </label>
             </div>
 
@@ -1890,8 +1910,12 @@ function SettingsPage() {
         {activeTab === "routing" && (
           <Section title="模型路由">
             <RouteEditor kind="translate" title="翻译（句子/段落）" />
-            <RouteEditor kind="lookup" title="AI 解释（单词卡切换）" />
-            <RouteEditor kind="chat" title="AI 对话（长按机器人图标）" />
+            <RouteEditor kind="lookup" title="单击机器人图标（AI解释）" />
+            <RouteEditor
+              kind="robotDouble"
+              title="双击机器人图标"
+              hint="未设置时使用与单击相同的配置。"
+            />
 
             <div className="route-editor mt-route-editor">
               <h3 className="route-title">机器翻译路由</h3>
@@ -2050,9 +2074,14 @@ function SettingsPage() {
 
         {activeTab === "prompts" && (
           <Section title="Prompt 模板">
-            <PromptEditor promptKey="translate" title="翻译 Prompt" />
-            <PromptEditor promptKey="explain" title="AI 解释 Prompt（单击机器人图标）" />
-            <PromptEditor promptKey="robotDouble" title="机器人双击 Prompt" />
+            <p className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
+              留空则使用默认模板。可用变量：<code>{"{text}"}</code> 选中文本、
+              <code>{"{target_lang}"}</code> 目标语言、
+              <code>{"{context}"}</code> 选区上下文（前后文，长度在「常规」设置中配置，0 时不注入）。
+            </p>
+            <PromptEditor promptKey="translate" title="翻译" />
+            <PromptEditor promptKey="explain" title="单击机器人图标（AI解释）" />
+            <PromptEditor promptKey="robotDouble" title="双击机器人图标" />
           </Section>
         )}
       </div>

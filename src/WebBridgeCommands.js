@@ -116,11 +116,11 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return { copied: true };
   }
 
-  // 「添加卡片」（工具栏添加按钮）：
+  // 「添加卡片」（工具栏添加按钮 / AI 对话回答「添加笔记」）：
   // payload = { title, body, markdown, colorIndex } —— 前端按当前结果组装（查词=单词标题+音标释义正文，
   // AI 解释=单词标题+解释正文，翻译=原句标题+译文正文），Markdown 模式默认开启。
-  // 插件侧在当前文档所属笔记本下创建一条新笔记，并通过 dc.highlightFromSelection 关联原文位置；
-  // 返回 { ok, topicid, noteId }。
+  // 插件侧在「当前打开的脑图」（notebookController.notebookId）下建卡并高亮原文：
+  // 空摘录即卡片（标题+评论内容），旧摘录/无选区则新建卡片（挂子节点/独立）；返回 { ok, topicid, noteId, highlighted }。
   function addCard(context, payload) {
     if (!payload || typeof payload !== "object") {
       throw new Error("缺少卡片内容");
@@ -155,7 +155,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
   }
 
   // AI 对话（长按机器人图标）：payload.messages = [{role, content}] 完整对话历史；
-  // payload.override = {providerId, modelId} 临时覆盖 chat 路由（模型选择 / 重新回答选模型）
+  // payload.override = {providerId, modelId, reasoningEffort?} 临时覆盖 chat 路由
+  // （模型选择 / 重新回答选模型 / 思考强度列表，均可单独出现，不写回设置）
   function chatSend(context, payload) {
     if (!payload || !Array.isArray(payload.messages)) {
       throw new Error("缺少对话消息");

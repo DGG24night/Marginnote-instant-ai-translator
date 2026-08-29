@@ -460,7 +460,7 @@ var MNIAIService = (function () {
 
       if (!provider || !route.modelId) {
         if (handlers.onError) {
-          handlers.onError("尚未配置 AI 对话路由，请先在设置「模型路由 → AI 对话」中选择提供商与模型");
+          handlers.onError("尚未选择 AI 对话模型，请点击对话输入框左侧的模型按钮选择");
         }
         return { cancel: function () {} };
       }
