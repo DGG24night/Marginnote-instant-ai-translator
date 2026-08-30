@@ -1021,6 +1021,13 @@ function CardPage() {
           (parseFloat(getComputedStyle(bodyEl).paddingBottom) || 0)
         : 24;
       height = dictRef.current.offsetHeight + padV + toolbarH + hintH;
+    } else if (state.status === "loading" && document.querySelector(".card-body .reason-block")) {
+      // 纯思考阶段：思考块跟随内容长高（.reason-body 封顶 180px 后内部滚动），
+      // 卡片须同步变大。card-fit 是 100% 高度链 + .card-body 内部滚动，根级
+      // body.scrollHeight 恒等于视口高度量不到内容；滚动容器自己的 scrollHeight
+      // 才是完整内容高度（含溢出部分，且已含容器上下 padding）。
+      const bodyEl = document.querySelector(".card-body");
+      height = (bodyEl ? bodyEl.scrollHeight : document.body.scrollHeight) + toolbarH + hintH;
     } else {
       height = document.body.scrollHeight;
     }
