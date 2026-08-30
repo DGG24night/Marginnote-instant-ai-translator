@@ -254,12 +254,36 @@ var MNIAIService = (function () {
     return "";
   }
 
-  // 流式 chunk 中的回复增量：只取 delta.content；reasoning_content（思考过程）与
-  // 非流式行为保持一致，不进入输出。
+  // 流式 chunk 中的回复增量：只取 delta.content（思考内容走 extractDeltaReasoning/onReason）
   function extractDeltaContent(obj) {
     try {
       var d = obj && obj.choices && obj.choices[0] && obj.choices[0].delta;
       if (d && typeof d.content === "string") return d.content;
+    } catch (e) { /* ignore */ }
+    return "";
+  }
+
+  // 流式 chunk 中的思考内容增量：reasoning_content（DeepSeek / DashScope Qwen3 等）
+  // 或 reasoning（OpenRouter 风格）。无则返回 ""。
+  function extractDeltaReasoning(obj) {
+    try {
+      var d = obj && obj.choices && obj.choices[0] && obj.choices[0].delta;
+      if (d) {
+        if (typeof d.reasoning_content === "string") return d.reasoning_content;
+        if (typeof d.reasoning === "string") return d.reasoning;
+      }
+    } catch (e) { /* ignore */ }
+    return "";
+  }
+
+  // 非流式响应中的思考内容（DeepSeek reasoner 等放在 message.reasoning_content）
+  function extractMessageReasoning(obj) {
+    try {
+      if (obj && obj.choices && obj.choices[0] && obj.choices[0].message) {
+        var m = obj.choices[0].message;
+        if (typeof m.reasoning_content === "string") return m.reasoning_content;
+        if (typeof m.reasoning === "string") return m.reasoning;
+      }
     } catch (e) { /* ignore */ }
     return "";
   }
@@ -368,8 +392,12 @@ var MNIAIService = (function () {
       timeout: 120
     }).then(function (res) {
       if (res.status >= 200 && res.status < 300) {
-        var content = extractContent(res.json());
+        var json = res.json();
+        var content = extractContent(json);
         if (content) {
+          // 思考内容（如有）先于正文一次性推送，前端折叠块展示
+          var reasoning = extractMessageReasoning(json);
+          if (reasoning && handlers.onReason) handlers.onReason(reasoning, reasoning);
           if (handlers.onDelta) handlers.onDelta(content, content);
           if (handlers.onDone) handlers.onDone(content);
         } else {
@@ -386,6 +414,8 @@ var MNIAIService = (function () {
   // 流式输出（2026-08-29 真流式）：StreamChannel 连接 + SSE 解析 + 80ms 合帧推送。
   //   - handlers.onDelta(delta, accumulated)：accumulated 为全量文本（前端全量替换渲染），
   //     delta 为本帧增量，打字节奏与真实生成速度一致；
+  //   - handlers.onReason(delta, accumulated)：思考内容（reasoning_content/reasoning），
+  //     与正文共用 80ms 合帧；思考阶段只走此通道，前端折叠块展示；
   //   - 节流是硬要求：SSE 事件可达每秒数十条，逐条推送会打满主线程（2026-08-09 教训）；
   //   - 降级链见文件头注释。返回 { cancel() }。
   //   - 看门狗：12s 未收到响应头（连接静默挂起的环境问题兜底，2026-08-29 实测
@@ -402,6 +432,8 @@ var MNIAIService = (function () {
       stream: null,     // MNIATStream.post 返回的 { cancel() }
       acc: "",          // 已累积回复文本
       lastSent: 0,      // 已推送到的字符位置
+      accReason: "",    // 已累积思考内容（reasoning_content / reasoning）
+      lastSentReason: 0,// 已推送到的思考内容位置
       flushTimer: null,
       statusSeen: false,
       watchdog: null
@@ -435,10 +467,15 @@ var MNIAIService = (function () {
     function flush() {
       state.flushTimer = null;
       if (state.cancelled || state.finished) return;
-      if (state.acc.length <= state.lastSent) return;
-      var delta = state.acc.substring(state.lastSent);
-      state.lastSent = state.acc.length;
-      if (handlers.onDelta) handlers.onDelta(delta, state.acc);
+      // 思考内容与正文共用一个合帧节拍：各自独立累积、独立推送（全量 accumulated）
+      if (handlers.onReason && state.accReason.length > state.lastSentReason) {
+        handlers.onReason(state.accReason.substring(state.lastSentReason), state.accReason);
+        state.lastSentReason = state.accReason.length;
+      }
+      if (state.acc.length > state.lastSent) {
+        if (handlers.onDelta) handlers.onDelta(state.acc.substring(state.lastSent), state.acc);
+        state.lastSent = state.acc.length;
+      }
     }
 
     function scheduleFlush() {
@@ -480,10 +517,20 @@ var MNIAIService = (function () {
           state.acc += piece;
           scheduleFlush();
         }
+        var reasonPiece = extractDeltaReasoning(obj);
+        if (reasonPiece) {
+          state.accReason += reasonPiece;
+          scheduleFlush();
+        }
       },
       onEnd: function () {
         if (state.cancelled || state.finished) return;
         endState();
+        // 收尾前把残余帧推完（思考内容在前，正文随后；endState 已停 flush 定时器）
+        if (handlers.onReason && state.accReason.length > state.lastSentReason) {
+          handlers.onReason(state.accReason.substring(state.lastSentReason), state.accReason);
+          state.lastSentReason = state.accReason.length;
+        }
         if (state.acc.trim().length > 0) {
           if (state.acc.length > state.lastSent && handlers.onDelta) {
             var delta = state.acc.substring(state.lastSent);
@@ -533,7 +580,7 @@ var MNIAIService = (function () {
   return {
     // kind: "translate" | "lookup"（决定使用哪组路由配置）
     // promptKind: "translate" | "explain"（决定使用哪个 prompt 模板）
-    // handlers: { onDelta(delta, accumulated), onDone(full), onError(message), resolved?, override?, context? }
+    // handlers: { onDelta(delta, accumulated), onReason(delta, accumulated), onDone(full), onError(message), resolved?, override?, context? }
     //   resolved: { provider, route } —— 调用方已解析好的有效路由（含「重新生成选模型」的临时覆盖），
     //             不传则内部按配置解析。
     //   context: 选区上下文（前后文），渲染进 prompt 的 {context} 变量（可选）

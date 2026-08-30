@@ -1935,6 +1935,56 @@ html.card-fit .card-body {
   50% { opacity: 0; }
 }
 
+/* 思考过程折叠块（reasoning_content）：思考中实时显示，正文开始后自动折叠保留 */
+.reason-block {
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.reason-summary {
+  cursor: pointer;
+  padding: 5px 10px;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+  line-height: 1.4;
+}
+
+.reason-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 自定义折叠指示箭头：收起 ▸ / 展开 ▾ */
+.reason-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+
+.reason-block[open] .reason-summary::before {
+  transform: rotate(90deg);
+}
+
+/* 思考进行中：标题用主题色提示活跃状态 */
+.reason-live .reason-summary {
+  color: var(--accent);
+}
+
+.reason-body {
+  padding: 0 10px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
 .dict-head {
   display: flex;
   align-items: center;

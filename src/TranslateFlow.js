@@ -505,6 +505,10 @@ var MNIATFlow = (function () {
         // 流式增量：前端 accumulated 累积渲染（打字机效果）
         pushEvent({ type: "delta", accumulated: accumulated });
       },
+      onReason: function (delta, accumulated) {
+        // 思考内容流式增量：前端折叠块实时展示，正文开始后自动折叠
+        pushEvent({ type: "reasoning", accumulated: accumulated });
+      },
       onDone: function (full) {
         if (full && full.trim().length > 0) {
           if (cacheKind && cacheKey) {
@@ -1150,6 +1154,10 @@ var MNIATFlow = (function () {
         resolved: ov ? resolveEffectiveRoute("chat", ov) : undefined,
         onDelta: function (delta, accumulated) {
           pushEvent({ type: "chatDelta", accumulated: accumulated });
+        },
+        onReason: function (delta, accumulated) {
+          // 思考内容流式增量：对话界面折叠块实时展示，正文开始后自动折叠
+          pushEvent({ type: "chatReasoning", accumulated: accumulated });
         },
         onDone: function (full) {
           chatSession = null;

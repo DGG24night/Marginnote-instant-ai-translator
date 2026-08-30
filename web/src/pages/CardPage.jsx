@@ -45,6 +45,29 @@ const initialState = {
   lookupProvider: null, // 当前查词服务（切换菜单高亮用）：youdao | bing | haici | ai | null
 };
 
+// 思考过程折叠块（reasoning_content 流式展示；正文开始后由调用方自动折叠）：
+//   live = 思考进行中（正文未开始）→ 标题「思考中…」并滚动跟随；完成后标题「思考过程」，
+//   保持折叠可展开回看。<details> 原生交互；open 由父级受控（onToggle 同步用户手动开合）。
+function ReasonBlock({ text, open, onToggle, live }) {
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    if (live && open && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
+  }, [text, open, live]);
+  if (!text) return null;
+  return (
+    <details
+      className={"reason-block" + (live ? " reason-live" : "")}
+      open={open}
+      onToggle={(e) => onToggle && onToggle(e.target.open)}
+    >
+      <summary className="reason-summary">{live ? "思考中…" : "思考过程"}</summary>
+      <div className="reason-body" ref={bodyRef}>{text}</div>
+    </details>
+  );
+}
+
 // ---------- 单色图标（fill=currentColor，颜色随按钮的 color 统一，亮/暗主题自适应） ----------
 
 // 扬声器（用户提供的 fayin.svg：喇叭主体 + 两圈声波）
@@ -336,12 +359,18 @@ function CardPage() {
   const [chatOpen, setChatOpen] = useState(false); // AI 对话界面（长按机器人图标进入）
   const [chatMessages, setChatMessages] = useState([]); // [{role:"user"|"assistant", text}]
   const [chatDraft, setChatDraft] = useState(""); // AI 回复流式草稿（chatDelta 累积）
+  const [reasonDraft, setReasonDraft] = useState(""); // 思考过程流式内容（reasoning 事件全量累积）
+  const [reasonOpen, setReasonOpen] = useState(true); // 思考块展开状态（正文开始后自动折叠，可手动展开）
+  const [chatReasonDraft, setChatReasonDraft] = useState(""); // 对话思考过程流式内容（chatReasoning 累积）
+  const [chatReasonOpen, setChatReasonOpen] = useState(true); // 对话思考块展开状态
   const [chatInput, setChatInput] = useState(""); // 对话输入框
   const [chatSending, setChatSending] = useState(false);
   const [chatPickerOpen, setChatPickerOpen] = useState(false); // 对话模型选择弹层
   const [chatPickerTarget, setChatPickerTarget] = useState(null); // 弹层用途：null=切换模型 | 数字=重新回答该条回答的索引
   const [chatEffortOpen, setChatEffortOpen] = useState(false); // 对话思考强度选择弹层（输入行「思考」按钮）
   const [searchFocusTick, setSearchFocusTick] = useState(0); // 搜索框聚焦重试触发器（D 键重复触发聚焦）
+  const reasonCollapsedRef = useRef(false); // 本次任务正文是否已开始（首帧后自动折叠思考块，仅一次）
+  const chatReasonCollapsedRef = useRef(false); // 对话：本次回答正文是否已开始（首帧后自动折叠）
   const readySentRef = useRef(false);
   const audioRef = useRef(null);
   const hintTimerRef = useRef(null);
@@ -709,6 +738,13 @@ function CardPage() {
         setChatInput("");
         setChatSending(false);
         setChatEffortOpen(false);
+        // 新任务开始：思考块复位（展开、清空上一任务内容），折叠标记复位
+        setReasonDraft("");
+        setReasonOpen(true);
+        reasonCollapsedRef.current = false;
+        setChatReasonDraft("");
+        setChatReasonOpen(true);
+        chatReasonCollapsedRef.current = false;
         // 快捷键历史导航：回放历史（文本与最近应用条目一致）保持索引，
         // 新任务（新选区/搜索词）重置为未开始。
         // 注意：仅依据 loading 事件判断（携带 text）；reset 事件不携带 text，
@@ -720,15 +756,40 @@ function CardPage() {
         }
       }
 
+      // 思考过程（AI 解释/翻译/机器人）：全量累积渲染；正文到达或出结果/报错时自动折叠
+      // （仅本任务首帧折叠一次，之后用户手动展开不再被流式增量压回）
+      if (event.type === "reasoning") {
+        setReasonDraft(event.accumulated || "");
+      }
+      if ((event.type === "delta" || event.type === "translateResult" || event.type === "error") &&
+        !reasonCollapsedRef.current) {
+        reasonCollapsedRef.current = true;
+        setReasonOpen(false);
+      }
+
       // AI 对话事件（与结果区 delta/translateResult 通道独立，仅在对话界面渲染）
-      if (event.type === "chatDelta") {
+      if (event.type === "chatReasoning") {
+        setChatReasonDraft(event.accumulated || "");
+      } else if (event.type === "chatDelta") {
+        // 正文开始：思考块自动折叠（内容保留，可展开回看）
+        if (!chatReasonCollapsedRef.current) {
+          chatReasonCollapsedRef.current = true;
+          setChatReasonOpen(false);
+        }
         setChatDraft(event.accumulated || "");
       } else if (event.type === "chatDone") {
         setChatDraft("");
-        setChatMessages((prev) => [...prev, { role: "assistant", text: String(event.text || "") }]);
+        // 思考内容随回答一起存档（折叠块默认收起，可展开回看）
+        setChatMessages((prev) => [...prev, {
+          role: "assistant",
+          text: String(event.text || ""),
+          reason: chatReasonDraftRef.current || "",
+        }]);
+        setChatReasonDraft("");
         setChatSending(false);
       } else if (event.type === "chatError") {
         setChatDraft("");
+        setChatReasonDraft("");
         setChatSending(false);
         showHint(`AI 对话失败：${event.message || "请重试"}`);
       }
@@ -1030,13 +1091,15 @@ function CardPage() {
   }, [isStreaming, chatSending]);
 
   // 非 streaming（done / 词典 / 加载 / 菜单 / 历史面板 / 笔记 / 对话等）：状态稳定后一次性测量
+  // 思考块相关状态也列入依赖：纯思考阶段（loading）块从无到有/长高、完成后手动展开/收起
+  // 都需要重测卡片高度（loading 期走 body.scrollHeight，思考块才会被计入）
   useEffect(() => {
     if (isStreaming) return undefined;
     const timer = setTimeout(() => {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, chatEffortOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, chatEffortOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending, reasonDraft, reasonOpen, chatReasonDraft, chatReasonOpen]);
 
 // 拼接模式：textarea 高度 auto-grow（基于 scrollHeight），到 CSS max-height 上限内部滚动。
   //   - onChange 触发的内容增长：见 onAppendChange，用 rAF 同步设 height；
@@ -1278,6 +1341,9 @@ function CardPage() {
     setChatInput("");
     setChatSending(false);
     setChatEffortOpen(false);
+    setChatReasonDraft("");
+    setChatReasonOpen(true);
+    chatReasonCollapsedRef.current = false;
   }, []);
 
   // 新建对话：清空当前消息与流式草稿（已保存的历史不受影响），输入框保留选中内容，
@@ -1287,6 +1353,9 @@ function CardPage() {
     setChatMessages([]);
     setChatDraft("");
     setChatEffortOpen(false);
+    setChatReasonDraft("");
+    setChatReasonOpen(true);
+    chatReasonCollapsedRef.current = false;
   }, [chatSending]);
 
   const sendChat = useCallback(async () => {
@@ -1296,6 +1365,10 @@ function CardPage() {
     setChatMessages(msgs);
     setChatInput("");
     setChatSending(true);
+    // 新一轮回答：思考块复位（本轮思考内容从零累积）
+    setChatReasonDraft("");
+    setChatReasonOpen(true);
+    chatReasonCollapsedRef.current = false;
     try {
       // 前端持有对话状态，每次发送全量历史；回复经 chatDelta/chatDone/chatError 事件推回。
       // 模型/思考强度不随请求覆盖：插件侧读 chat 路由（对话界面切换时已持久化）
@@ -1313,8 +1386,10 @@ function CardPage() {
   // （StrictMode 下不能在 setState updater 里再触发其它 setState）
   const chatSendingRef = useRef(false);
   const chatDraftRef = useRef("");
+  const chatReasonDraftRef = useRef(""); // 对话思考内容镜像（chatDone/暂停收尾时随消息存档）
   useEffect(() => { chatSendingRef.current = chatSending; }, [chatSending]);
   useEffect(() => { chatDraftRef.current = chatDraft; }, [chatDraft]);
+  useEffect(() => { chatReasonDraftRef.current = chatReasonDraft; }, [chatReasonDraft]);
 
   const stopChat = useCallback(async () => {
     if (!chatSendingRef.current) return;
@@ -1325,9 +1400,14 @@ function CardPage() {
     setChatSending(false);
     const partial = (chatDraftRef.current || "").trim();
     if (partial) {
-      setChatMessages((prev) => [...prev, { role: "assistant", text: partial }]);
+      setChatMessages((prev) => [...prev, {
+        role: "assistant",
+        text: partial,
+        reason: chatReasonDraftRef.current || "",
+      }]);
     }
     setChatDraft("");
+    setChatReasonDraft("");
   }, []);
 
   // ---------- AI 对话：模型选择 / 思考强度 / 重新回答 / 回答操作 ----------
@@ -1360,6 +1440,10 @@ function CardPage() {
     setChatMessages(prefix);
     setChatDraft("");
     setChatSending(true);
+    // 重答：思考块复位（新回答的思考内容从零累积）
+    setChatReasonDraft("");
+    setChatReasonOpen(true);
+    chatReasonCollapsedRef.current = false;
     try {
       await MNBridge.send("chatSend", {
         messages: prefix.map((m) => ({ role: m.role, content: m.text })),
@@ -2271,6 +2355,13 @@ const onAppendChange = (e) => {
                   // AI 回复按 markdown 渲染（代码块/加粗/列表等与结果区一致）；
                   // 气泡下方操作行：复制 / 添加笔记（单击建卡、双击编辑）/ 重新回答（长按选模型）
                   <div key={i} className="chat-msg-wrap">
+                    {/* 已完成回答附带的思考过程：默认收起，可展开回看（非受控 details） */}
+                    {m.reason ? (
+                      <details className="reason-block">
+                        <summary className="reason-summary">思考过程</summary>
+                        <div className="reason-body">{m.reason}</div>
+                      </details>
+                    ) : null}
                     <div
                       className="chat-msg chat-msg-assistant"
                       dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
@@ -2315,6 +2406,15 @@ const onAppendChange = (e) => {
                 <div className="chat-msg chat-msg-assistant chat-loading">
                   <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
                 </div>
+              )}
+              {/* 思考进行中（chatReasoning 流式）：实时展示，正文开始后自动折叠 */}
+              {chatSending && chatReasonDraft && (
+                <ReasonBlock
+                  text={chatReasonDraft}
+                  open={chatReasonOpen}
+                  onToggle={setChatReasonOpen}
+                  live={!chatDraft}
+                />
               )}
               {chatDraft && (
                 <div
@@ -2408,14 +2508,25 @@ const onAppendChange = (e) => {
           </div>
         )}
         {!noteOpen && !chatOpen && state.status === "loading" && (
-          <div className="card-loading">
-            <span className="spinner" />
-            正在{modeLabel}…
-          </div>
+          reasonDraft ? (
+            // 思考进行中：实时展示思考内容，替代加载行（正文到达后切到结果区渲染并自动折叠）
+            <ReasonBlock text={reasonDraft} open={reasonOpen} onToggle={setReasonOpen} live />
+          ) : (
+            <div className="card-loading">
+              <span className="spinner" />
+              正在{modeLabel}…
+            </div>
+          )
         )}
 
         {!noteOpen && !chatOpen && (state.status === "streaming" || state.status === "done") && (
           <div className="card-result">
+            <ReasonBlock
+              text={reasonDraft}
+              open={reasonOpen}
+              onToggle={setReasonOpen}
+              live={state.status === "streaming" && !state.accumulated}
+            />
             <span
               dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }}
             />
@@ -2493,8 +2604,11 @@ const onAppendChange = (e) => {
         <div
           className="card-measure"
           ref={measureRef}
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }}
-        />
+        >
+          {/* 思考块与结果区同参渲染：折叠/展开状态一致，高度测量才准确 */}
+          <ReasonBlock text={reasonDraft} open={reasonOpen} live={false} />
+          <span dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }} />
+        </div>
       )}
 
       {/* 查词服务切换菜单（bar 图标）：临时切换，不影响默认查词服务设置 */}
