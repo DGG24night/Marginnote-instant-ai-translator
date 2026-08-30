@@ -1493,7 +1493,7 @@ function SettingsPage() {
                   checked={config.streamMode !== false}
                   onChange={(e) => update((c) => { c.streamMode = e.target.checked; })}
                 />
-                打字机效果
+                流式输出
               </label>
               <label className="checkbox">
                 <input

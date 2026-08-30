@@ -1,7 +1,7 @@
 // network.js —— 网络封装（MNNetwork.fetch）
 // 来源：mn-docs「网络请求」教程封装（Response#text 依赖 MNIATBase64/MNIATUTF8）
-// 说明：流式（NSURLConnection delegate 分块）在本环境实测不可用（回调不触发且卡死），
-//       已整体移除，仅保留一次性请求通道。
+// 说明：一次性请求走本文件；delegate 分块流式（SSE）在 StreamChannel.js
+//       （2026-08-29 探针实测可用，AIService 流式输出依赖）。
 //
 // 默认 UA 选用桌面 Mac Safari 的原因（2026-08-12）：
 //   部分网站（如金山词霸 www.iciba.com）对手机 UA 直接 302 → 移动端空壳页，导致

@@ -27,6 +27,11 @@ var MNIATFlow = (function () {
 
   function pushEvent(obj) {
     MNIATFloatingCard.sendEvent(obj);
+    // 上下文失败提示延后弹出：任务出结果/错误即流式请求已结束，此时弹 HUD 不再与
+    // 连接建立、delegate 回调接收重叠（见 pendingContextHud 注释）。
+    if (obj && (obj.type === "translateResult" || obj.type === "error")) {
+      flushPendingContextHud();
+    }
   }
 
   function isSingleWord(text) {
@@ -298,6 +303,23 @@ var MNIATFlow = (function () {
     }
   }
 
+  // 「上下文失败」HUD 延迟展示（2026-08-30）：
+  //   extractContext 失败（页文本不可用 / 选区未定位到）时不再同步弹 HUD——它的展示窗口
+  //   紧贴随后的 AI 流式请求建立。用户实测：静默挂起的流全部出现在「未定位到上下文」场景，
+  //   同一单词在上下文长度=0（不弹 HUD、不读页文本层）时正常。机制未完全定位，先把 HUD
+  //   移出请求生命周期：extractContext 只挂起消息，任务出结果/错误（pushEvent 终结事件）
+  //   时再弹，此时流式连接已结束。
+  var pendingContextHud = null;
+
+  function flushPendingContextHud() {
+    if (!pendingContextHud) return;
+    var hud = pendingContextHud;
+    pendingContextHud = null;
+    try {
+      Application.sharedInstance().showHUD(hud.msg, hud.win, hud.duration);
+    } catch (e) { /* 忽略 */ }
+  }
+
   // 选区所在页码：DocumentController.currPageNo（1 起）/ currPageIndex（0 起）。
   // 只用文档控制器属性（官方文档确认存在），不调用 MNUtil（环境注入与否未知，
   // 且可能触发 ObjC 异常导致崩溃）。
@@ -335,7 +357,7 @@ var MNIATFlow = (function () {
           hudMsg += "；实际键名：" + pageResult.info.firstKeys.slice(0, 5).join("、");
         }
         if (hudMsg.length > 220) hudMsg = hudMsg.slice(0, 220) + "…";
-        Application.sharedInstance().showHUD(hudMsg, win, 4);
+        pendingContextHud = { msg: hudMsg, win: win, duration: 4 };
         return "";
       }
       if (!needle) return "";
@@ -349,8 +371,12 @@ var MNIATFlow = (function () {
           console.log("[MNIATFlow] context: selection not found in page text (pageNo=" + pageNo +
             ", pageLen=" + pageText.length + ", needle=" + needle.slice(0, 40) + ")");
           var preview = needle.length > 20 ? needle.slice(0, 20) + "…" : needle;
-          Application.sharedInstance().showHUD("[翻译插件] 上下文：未定位到选区「" + preview +
-            "」（页文本长度 " + pageText.length + "），已降级为不注入", win, 3);
+          pendingContextHud = {
+            msg: "[翻译插件] 上下文：未定位到选区「" + preview +
+              "」（页文本长度 " + pageText.length + "），已降级为不注入",
+            win: win,
+            duration: 3
+          };
           return "";
         }
         var boundsFlat = expandByWords(flat, pos, pos + flatNeedle.length, len);
@@ -887,6 +913,7 @@ var MNIATFlow = (function () {
       currentJob.session.cancel();
       currentJob.session = null;
     }
+    pendingContextHud = null; // 历史条目直接展示缓存，不消费上下文提示
     var win = (currentJob && currentJob.win) || lastWin;
     pushEvent({ type: "reset" });
 
@@ -954,6 +981,7 @@ var MNIATFlow = (function () {
       //   - 卡片选中态（fallback 为字符串）：标题/摘录不一定来自当前页文本层，提取无意义，
       //     且无文档时（脑图模式）会误弹「未定位到选区」HUD → 直接跳过（context 为空串）。
       var fromCard = typeof fallback === "string";
+      pendingContextHud = null; // 新任务开始：丢弃上一任务未消费的上下文提示
       currentJob = {
         mode: mode,
         text: text,
@@ -1146,6 +1174,16 @@ var MNIATFlow = (function () {
       return { started: true };
     },
 
+    // 暂停 AI 对话生成（输入行暂停按钮）：取消进行中的流式请求。
+    // 已生成的部分保留在前端 chatDraft，由前端在暂停确认后追加为回答。
+    chatStop: function () {
+      if (chatSession) {
+        try { chatSession.cancel(); } catch (e) { /* 忽略 */ }
+        chatSession = null;
+      }
+      return { stopped: true };
+    },
+
     // 「重新生成」：重跑当前 AI 翻译/解释任务，跳过缓存；
     // override = { providerId, modelId }（AI 提供商，长按选模型时传入，临时覆盖，不写回配置）
     //          | { machineProviderId }（机器翻译服务，长按选模型时传入，临时覆盖，不写回 machineRouting）
@@ -1194,6 +1232,8 @@ var MNIATFlow = (function () {
       // 任何取消路径（新划词/关闭卡片/切换任务）都退出拼接模式；
       // 拼接模式下划词走 handleSelection 前置分支，不经过这里，会话不受影响。
       appendSession = null;
+      // 丢弃未消费的上下文失败提示（任务被取消时不会再有终结事件来冲刷它）
+      pendingContextHud = null;
       // 同步取消进行中的 AI 对话请求（卡片关闭/新任务时不再推送 chat 事件）
       if (chatSession) {
         try { chatSession.cancel(); } catch (e) { /* 忽略 */ }

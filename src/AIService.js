@@ -1,12 +1,12 @@
 // AIService.js —— AI 翻译/解释服务（OpenAI Chat Completions 兼容协议）
-// 流式输出（2026-08-09 修复版）：
-//   「流式输出」= 非流式请求 + 打字机模拟：fetch 一次性拿完整结果，
-//   插件侧 NSTimer 分批推送 delta，前端逐字显示（打字机效果）。
-//   为何不用真流式：NSURLConnection delegate 流式在本环境两次实测不可用——
-//   2026-08-06 回调零触发；2026-08-09 重建后开启即主线程卡死（mac 彩虹转盘），
-//   且主线程卡死后看门狗 NSTimer 无法触发，降级形同虚设。
-//   故 delegate 真流式已整体移除（原实验通道 StreamChannel.js 一并清理）。
-// 开关：config.streamMode（默认 true）。false = 一次性完整显示（无打字效果）。
+// 流式输出（2026-08-29 真流式版）：
+//   streamMode 开启时 AI 请求走 StreamChannel（NSURLConnection delegate + SSE 行缓冲解析），
+//   事件到达即累积、80ms NSTimer 合帧后经既有 onDelta 通道推送（前端全量替换渲染，零改动）。
+//   降级链：HTTP>=400 → 直接报错（错误确定，重试无意义）；传输层失败且无内容、
+//   或 200 但零 SSE 事件（提供商忽略 stream）→ 自动回退 requestOnce 重发。
+//   机器翻译仍用 simulateTyping 打字机模拟（非 AI 接口，无流式形态，同样受 streamMode 控制）。
+// 历史：2026-08-06/08-09 两次 delegate 流式失败（回调零触发 / 主线程卡死）均为实现问题，
+//   根因与修正见 StreamChannel.js 头注释；验证探针 StreamProbe.js 已于 2026-08-30 删除。
 
 var MNIAIService = (function () {
 
@@ -254,6 +254,28 @@ var MNIAIService = (function () {
     return "";
   }
 
+  // 流式 chunk 中的回复增量：只取 delta.content；reasoning_content（思考过程）与
+  // 非流式行为保持一致，不进入输出。
+  function extractDeltaContent(obj) {
+    try {
+      var d = obj && obj.choices && obj.choices[0] && obj.choices[0].delta;
+      if (d && typeof d.content === "string") return d.content;
+    } catch (e) { /* ignore */ }
+    return "";
+  }
+
+  // 流式路径的 HTTP 错误格式化：bodyText 为 StreamChannel 收集的原始响应体文本
+  function httpErrorText(status, bodyText) {
+    var message = "HTTP " + status;
+    try {
+      var obj = JSON.parse(bodyText || "");
+      if (obj && obj.error && obj.error.message) return String(obj.error.message);
+      if (obj && obj.message) return String(obj.message); // 部分厂商（如百炼）为顶层 message
+    } catch (e) { /* 非 JSON 响应体 */ }
+    if (bodyText) message += ": " + String(bodyText).slice(0, 200);
+    return message;
+  }
+
   function extractError(status, res) {
     var message = "HTTP " + status;
     try {
@@ -361,58 +383,151 @@ var MNIAIService = (function () {
     });
   }
 
-  // 流式输出：非流式 fetch + NSTimer 分批推送（打字机效果）。
-  // 与前端 delta 事件同一通道，前端状态机零改动。返回 { cancel() }。
+  // 流式输出（2026-08-29 真流式）：StreamChannel 连接 + SSE 解析 + 80ms 合帧推送。
+  //   - handlers.onDelta(delta, accumulated)：accumulated 为全量文本（前端全量替换渲染），
+  //     delta 为本帧增量，打字节奏与真实生成速度一致；
+  //   - 节流是硬要求：SSE 事件可达每秒数十条，逐条推送会打满主线程（2026-08-09 教训）；
+  //   - 降级链见文件头注释。返回 { cancel() }。
+  //   - 看门狗：12s 未收到响应头（连接静默挂起的环境问题兜底，2026-08-29 实测
+  //     存在挂起场景）→ 取消连接并降级一次性请求，保证功能不死等。
+  //     响应头正常 1-2s 到达（探针实测 Δ995ms），12s 余量充足；此前 45s 用户
+  //     等不及即认定卡死（2026-08-30 缩短）。
+  var STREAM_FLUSH_MS = 80;
+  var RESPONSE_WATCHDOG_S = 12;
+
   function requestTyping(provider, body, handlers) {
     var state = {
       cancelled: false,
-      typing: null // simulateTyping 返回的 { cancel() }
+      finished: false,
+      stream: null,     // MNIATStream.post 返回的 { cancel() }
+      acc: "",          // 已累积回复文本
+      lastSent: 0,      // 已推送到的字符位置
+      flushTimer: null,
+      statusSeen: false,
+      watchdog: null
     };
 
-    function cancel() {
-      if (state.cancelled) return;
-      state.cancelled = true;
-      if (state.typing) {
-        state.typing.cancel();
-        state.typing = null;
+    function clearFlush() {
+      if (state.flushTimer) {
+        state.flushTimer.invalidate();
+        state.flushTimer = null;
       }
     }
 
-    console.log("[MNIAIService] request start (simulated stream): " + provider.name + " / " + body.model);
-
-    MNNetwork.fetch(endpointOf(provider), {
-      method: "POST",
-      headers: headersOf(provider),
-      json: body,
-      timeout: 120
-    }).then(function (res) {
-      if (state.cancelled) return;
-      if (res.status >= 200 && res.status < 300) {
-        var content = extractContent(res.json());
-        if (content && content.trim().length > 0) {
-          state.typing = simulateTyping(content, {
-            onDelta: function (delta, accumulated) {
-              if (state.cancelled) return;
-              if (handlers.onDelta) handlers.onDelta(delta, accumulated);
-            },
-            onDone: function (full) {
-              if (state.cancelled) return;
-              state.typing = null;
-              if (handlers.onDone) handlers.onDone(full);
-            }
-          });
-        } else {
-          if (handlers.onError) handlers.onError("AI 返回为空，请检查模型配置");
-        }
-      } else {
-        if (handlers.onError) handlers.onError(extractError(res.status, res));
+    function clearWatchdog() {
+      if (state.watchdog) {
+        state.watchdog.invalidate();
+        state.watchdog = null;
       }
-    }).catch(function (err) {
-      if (state.cancelled) return;
-      if (handlers.onError) handlers.onError("请求失败: " + errorText(err));
+    }
+
+    function endState() {
+      state.finished = true;
+      clearFlush();
+      clearWatchdog();
+      if (state.stream) {
+        var s = state.stream;
+        state.stream = null;
+        s.cancel();
+      }
+    }
+
+    function flush() {
+      state.flushTimer = null;
+      if (state.cancelled || state.finished) return;
+      if (state.acc.length <= state.lastSent) return;
+      var delta = state.acc.substring(state.lastSent);
+      state.lastSent = state.acc.length;
+      if (handlers.onDelta) handlers.onDelta(delta, state.acc);
+    }
+
+    function scheduleFlush() {
+      if (state.cancelled || state.finished || state.flushTimer) return;
+      state.flushTimer = NSTimer.scheduledTimerWithTimeInterval(STREAM_FLUSH_MS / 1000, false, flush);
+    }
+
+    // 一次性请求降级：仅在未输出任何内容时调用，避免重复渲染
+    function fallbackOnce(reason) {
+      console.log("[MNIAIService] stream fallback (" + reason + "): " + provider.name + " / " + body.model);
+      requestOnce(provider, body, handlers);
+    }
+
+    console.log("[MNIAIService] request start (stream): " + provider.name + " / " + body.model);
+
+    // body 由调用方按非流式构造（stream:false），这里浅拷贝并置为流式
+    var streamBody = {};
+    for (var k in body) streamBody[k] = body[k];
+    streamBody.stream = true;
+
+    var streamHeaders = headersOf(provider);
+    streamHeaders["Accept"] = "text/event-stream";
+
+    state.stream = MNIATStream.post(endpointOf(provider), {
+      method: "POST",
+      headers: streamHeaders,
+      json: streamBody,
+      timeout: 120
+    }, {
+      onStatus: function () {
+        // 响应头到达：解除看门狗（此后由连接空闲超时兜底）
+        state.statusSeen = true;
+        clearWatchdog();
+      },
+      onEvent: function (obj) {
+        if (state.cancelled || state.finished) return;
+        var piece = extractDeltaContent(obj);
+        if (piece) {
+          state.acc += piece;
+          scheduleFlush();
+        }
+      },
+      onEnd: function () {
+        if (state.cancelled || state.finished) return;
+        endState();
+        if (state.acc.trim().length > 0) {
+          if (state.acc.length > state.lastSent && handlers.onDelta) {
+            var delta = state.acc.substring(state.lastSent);
+            state.lastSent = state.acc.length;
+            handlers.onDelta(delta, state.acc);
+          }
+          if (handlers.onDone) handlers.onDone(state.acc);
+        } else {
+          // 200 但零内容：提供商可能忽略 stream 参数 → 降级重发
+          fallbackOnce("empty");
+        }
+      },
+      onError: function (message, info) {
+        if (state.cancelled || state.finished) return;
+        endState();
+        if (info && typeof info.status === "number" && info.status >= 400) {
+          // HTTP 错误是确定性的：解析错误体直接报错，不重试
+          if (handlers.onError) handlers.onError(httpErrorText(info.status, info.bodyText));
+          return;
+        }
+        if (state.acc.length === 0) {
+          // 传输层失败且未输出任何内容 → 降级为一次性请求
+          fallbackOnce("error: " + message);
+          return;
+        }
+        if (handlers.onError) handlers.onError("请求失败: " + message);
+      }
     });
 
-    return { cancel: cancel };
+    // 看门狗：连接静默挂起（无响应头）的兜底，见上方注释
+    state.watchdog = NSTimer.scheduledTimerWithTimeInterval(RESPONSE_WATCHDOG_S, false, function () {
+      if (state.cancelled || state.finished || state.statusSeen) return;
+      console.log("[MNIAIService] stream watchdog: no response in " + RESPONSE_WATCHDOG_S + "s → fallback");
+      endState();
+      fallbackOnce("no-response-" + RESPONSE_WATCHDOG_S + "s");
+    });
+
+    return {
+      cancel: function () {
+        if (state.cancelled) return;
+        state.cancelled = true;
+        endState();
+      }
+    };
   }
 
   return {
@@ -450,7 +565,7 @@ var MNIAIService = (function () {
 
     // AI 对话（长按机器人图标）：直接发送完整 messages（[{role:"user"|"assistant", content}]），
     // 不经 prompt 模板渲染；路由使用 config.routing.chat（设置「模型路由 → AI 对话」）。
-    // 返回 { cancel() }；结果经 handlers.onDelta/onDone/onError 推送（打字机效果遵循 streamMode）。
+    // 返回 { cancel() }；结果经 handlers.onDelta/onDone/onError 推送（流式输出遵循 streamMode）。
     runMessages: function (kind, messages, handlers) {
       handlers = handlers || {};
 

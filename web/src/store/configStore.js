@@ -155,7 +155,7 @@ const EMPTY_CONFIG = {
   pronounceAccent: "us",
   lookupProvider: "youdao", // youdao | bing | haici | ai（查词服务提供商）
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
-  streamMode: true, // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
+  streamMode: true, // 流式输出：AI 回复逐字实时显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
   rememberCardSize: false,
   shortcuts: { lookup: "d", note: "n", save: "alt+s", chat: "c", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" }, // 结果卡片内快捷键
   noteIncludeResult: true, // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）

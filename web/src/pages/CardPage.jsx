@@ -190,6 +190,21 @@ function SendIcon() {
   );
 }
 
+// 暂停（用户提供的 zanting.svg：圆底 + 双竖条，1 path，单色 currentColor）
+const PAUSE_PATHS = [
+  "M512 0C230.4 0 0 230.4 0 512s230.4 512 512 512 512-230.4 512-512S793.6 0 512 0zM454.4 723.2c0 19.2-19.2 32-44.8 32-25.6 0-44.8-12.8-44.8-32L364.8 300.8c0-19.2 19.2-32 44.8-32 25.6 0 44.8 12.8 44.8 32L454.4 723.2zM665.6 723.2c0 19.2-19.2 32-44.8 32-25.6 0-44.8-12.8-44.8-32L576 300.8c0-19.2 19.2-32 44.8-32 25.6 0 44.8 12.8 44.8 32L665.6 723.2z",
+];
+
+function PauseIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      {PAUSE_PATHS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
 // 新建对话（用户提供的 xinjian.svg：圆底 + 加号，3 path，单色 currentColor）
 const NEWCHAT_PATHS = [
   "M500.48 106.1888a416.9728 416.9728 0 1 0 416.9728 416.9728 417.4336 417.4336 0 0 0-416.9728-416.9728z m0 767.6928a350.72 350.72 0 1 1 350.72-350.72 350.72 350.72 0 0 1-350.72 350.72z",
@@ -1293,6 +1308,28 @@ function CardPage() {
     }
   }, [chatInput, chatMessages, chatSending, showHint]);
 
+  // 暂停生成（发送按钮切换而来）：取消插件侧流式请求，已生成的部分保留并追加为回答。
+  // 用 ref 读最新状态：await 返回时 chatDone 可能已先到（回答自然完成），避免重复追加
+  // （StrictMode 下不能在 setState updater 里再触发其它 setState）
+  const chatSendingRef = useRef(false);
+  const chatDraftRef = useRef("");
+  useEffect(() => { chatSendingRef.current = chatSending; }, [chatSending]);
+  useEffect(() => { chatDraftRef.current = chatDraft; }, [chatDraft]);
+
+  const stopChat = useCallback(async () => {
+    if (!chatSendingRef.current) return;
+    try {
+      await MNBridge.send("chatStop");
+    } catch (e) { /* 取消失败也本地收尾（流可能已自行结束） */ }
+    if (!chatSendingRef.current) return; // chatDone 已先到，由其收尾
+    setChatSending(false);
+    const partial = (chatDraftRef.current || "").trim();
+    if (partial) {
+      setChatMessages((prev) => [...prev, { role: "assistant", text: partial }]);
+    }
+    setChatDraft("");
+  }, []);
+
   // ---------- AI 对话：模型选择 / 思考强度 / 重新回答 / 回答操作 ----------
 
   // 当前生效的对话模型与思考强度（持久化在 chat 路由：对话界面切换时写入，= 上次使用）
@@ -2301,15 +2338,25 @@ const onAppendChange = (e) => {
                     if (e.key === "Enter") sendChat();
                   }}
                 />
-                {/* 发送：fasong.svg 发送图标，位于输入框右侧 */}
-                <button
-                  className="icon-btn chat-send-btn"
-                  title={chatSending ? "回复中…" : "发送"}
-                  disabled={chatSending || !chatInput.trim()}
-                  onClick={sendChat}
-                >
-                  <SendIcon />
-                </button>
+                {/* 发送 / 暂停：发送后变为暂停（zanting.svg），回答完成或暂停后恢复发送（fasong.svg） */}
+                {chatSending ? (
+                  <button
+                    className="icon-btn chat-send-btn"
+                    title="暂停"
+                    onClick={stopChat}
+                  >
+                    <PauseIcon />
+                  </button>
+                ) : (
+                  <button
+                    className="icon-btn chat-send-btn"
+                    title="发送"
+                    disabled={!chatInput.trim()}
+                    onClick={sendChat}
+                  >
+                    <SendIcon />
+                  </button>
+                )}
               </div>
               <div className="chat-input-row">
                 {/* 模型选择：显示当前生效模型，点击切换；选择持久化 = 上次使用的模型 */}

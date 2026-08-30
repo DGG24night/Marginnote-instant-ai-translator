@@ -1,6 +1,7 @@
 JSB.require("WebDevServerConfig");
 JSB.require("base64");
 JSB.require("network");
+JSB.require("StreamChannel"); // delegate 真流式通道（SSE），AIService 流式输出依赖
 JSB.require("MD5");
 JSB.require("SHA1");
 JSB.require("SHA256");

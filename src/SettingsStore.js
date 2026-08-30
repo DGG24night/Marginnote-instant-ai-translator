@@ -28,7 +28,7 @@ var MNIATSettings = (function () {
       pronounceAccent: "us",        // uk | us
       lookupProvider: "youdao",     // youdao | bing | haici | kingsoft | ai（查词服务提供商；ai = 直接用 AI 解释）
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
-      streamMode: true,             // AI 翻译/解释结果打字机效果（先取完整结果、再逐字显示）
+      streamMode: true,             // 流式输出：AI 回复走 delegate 真流式逐字显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
       shortcuts: {                  // 结果卡片内快捷键（可在设置中自定义）
         lookup: "d",                // 快速查词：聚焦搜索框，Enter 查询

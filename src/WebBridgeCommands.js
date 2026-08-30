@@ -169,6 +169,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return { items: MNIATChatHistory.list() };
   }
 
+  // 暂停 AI 对话生成（输入行暂停按钮）：取消进行中的流式请求；
+  // 已生成的部分由前端本地追加为回答（chatDraft 仍在前端）
+  function chatStop() {
+    return MNIATFlow.chatStop();
+  }
+
   // 工具栏搜索框查询任意单词：用默认查词服务提供商（config.lookupProvider）查词
   function cardLookup(context, payload) {
     if (!payload || !payload.text) {
@@ -295,6 +301,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     explainWithAI,
     robotRun,
     chatSend,
+    chatStop,
     getChatHistory,
     cardLookup,
     cardLookupProvider,
