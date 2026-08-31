@@ -101,7 +101,7 @@ var MNIATFlow = (function () {
     return [left, k];
   }
 
-  // ---------- 选区上下文提取（prompt {context} 变量） ----------
+  // ---------- 选区上下文提取（prompt {context} 变量，仅查词任务使用） ----------
   //
   // ⚠️ 崩溃教训（2026-08-15 用户实测：划词闪退）：
   //   JSCore 的 try/catch 只能捕获 JS 异常，**捕获不了 ObjC 层异常**。
@@ -500,7 +500,7 @@ var MNIATFlow = (function () {
 
     job.session = MNIAIService.run(routingKind, promptKind, job.text, {
       resolved: resolved, // 复用已解析的路由（含临时覆盖），避免内部二次解析导致键不一致
-      context: job.context || "", // 选区上下文 → prompt {context} 变量
+      context: job.context || "", // 选区上下文 → prompt {context} 变量（仅查词任务提取）
       onDelta: function (delta, accumulated) {
         // 流式增量：前端 accumulated 累积渲染（打字机效果）
         pushEvent({ type: "delta", accumulated: accumulated });
@@ -980,10 +980,14 @@ var MNIATFlow = (function () {
       if (mode === "translate" && config.translateEnabled === false) return;
 
       lastWin = win;
-      // 选区上下文（prompt {context} 变量）：
-      //   - 文档划词（fallback 为 undefined/null）：从当前页文本层提取前后文；
-      //   - 卡片选中态（fallback 为字符串）：标题/摘录不一定来自当前页文本层，提取无意义，
-      //     且无文档时（脑图模式）会误弹「未定位到选区」HUD → 直接跳过（context 为空串）。
+      // 选区上下文（prompt {context} 变量，2026-08-31 起仅查词任务提取）：
+      //   - 查词（mode=lookup，单词/词组）：从当前页文本层提取前后文——AI 解释的
+      //     「原句/分析」段依赖上下文，保留；
+      //   - 翻译（mode=translate，句子/段落）：不提取。长选区跨行/跨页时在页文本层
+      //     定位失败率高，频繁弹「未定位到选区」HUD，且该场景与流式请求静默挂起强
+      //     相关；翻译本身选区即完整原文，不注入上下文 → context 恒为空串；
+      //   - 卡片选中态（fallback 为字符串）：标题/摘录不一定来自当前页文本层，提取
+      //     无意义，且无文档时（脑图模式）会误弹「未定位到选区」HUD → 直接跳过。
       var fromCard = typeof fallback === "string";
       pendingContextHud = null; // 新任务开始：丢弃上一任务未消费的上下文提示
       currentJob = {
@@ -991,7 +995,7 @@ var MNIATFlow = (function () {
         text: text,
         win: win,
         session: null,
-        context: fromCard ? "" : extractContext(win, text),
+        context: (mode === "lookup" && !fromCard) ? extractContext(win, text) : "",
         fallbackText: fromCard ? (fallback || "") : "" // 卡片选中态：primary（标题）失败时回退到摘录正文
       };
 

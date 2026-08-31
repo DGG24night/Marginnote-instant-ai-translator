@@ -1,8 +1,9 @@
 // PromptTemplates.js —— 默认 prompt 模板与变量渲染
 // 支持占位符：{text} 选中文本、{target_lang} 目标语言、{context} 选区上下文（前后文）
 // 用户自定义 prompt 为空串时回退到内置默认模板。
-// {context} 由调用方（TranslateFlow）在划词时从当前页文本层提取并随任务传入，
-// 长度由常规设置「选区上下文长度」控制（0 = 不获取，变量渲染为空字符串）。
+// {context} 由调用方（TranslateFlow）在划词查词时从当前页文本层提取并随任务传入，
+// 长度由常规设置「选区上下文长度」控制（0 = 不获取，变量渲染为空字符串）；
+// 翻译任务（句子/段落）不提取上下文（2026-08-31），{context} 恒为空串。
 
 var MNIATPrompts = (function () {
   var DEFAULT_TRANSLATE =
@@ -31,7 +32,7 @@ var MNIATPrompts = (function () {
     "单词所在的上下文如下：{context}";
 
   // 上下文为空时从渲染结果中移除的悬空尾行（DEFAULT_EXPLAIN 的 {context} 引导句）：
-  // 上下文未开启/提取失败/搜索框查词时 {context} 渲染为空串，若不移除会留下
+  // 上下文未开启/提取失败/搜索框查词/翻译任务时 {context} 渲染为空串，若不移除会留下
   // 「单词所在的上下文如下：」空段落，模型可能据此编造上下文。仅匹配该固定文案。
   var EMPTY_CONTEXT_SUFFIX = "单词所在的上下文如下：";
 
@@ -75,8 +76,8 @@ var MNIATPrompts = (function () {
     },
 
     // kind: "translate" | "explain" | "robotDouble"
-    // context: 选区上下文（前后文）字符串；未提供或为空时 {context} 渲染为空串，
-    //          并移除悬空的「上下文如下：」尾行（见 EMPTY_CONTEXT_SUFFIX）
+    // context: 选区上下文（前后文）字符串，仅查词任务传入；未提供或为空时 {context}
+    //          渲染为空串，并移除悬空的「上下文如下：」尾行（见 EMPTY_CONTEXT_SUFFIX）
     build: function (kind, text, context) {
       var config = MNIATSettings.load();
       var custom = config.prompts && config.prompts[kind];

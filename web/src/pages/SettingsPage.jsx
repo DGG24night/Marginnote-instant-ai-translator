@@ -1425,7 +1425,7 @@ function SettingsPage() {
 
               <Field
                 label="选区上下文长度"
-                hint="划词翻译/解释时，从当前页文本层取选区前后的文字作为上下文，渲染进 prompt 的 {context} 变量，帮助 AI 理解语境（如指代、专业术语）。填写选区前后各取多少词（英文按单词计，中文按字计）；设为 0 表示不获取上下文。"
+                hint="查词/ AI 解释时，从当前页文本层取选区前后的文字作为上下文，渲染进 prompt 的 {context} 变量，帮助 AI 理解语境（如原句、指代、专业术语）。填写选区前后各取多少词（英文按单词计，中文按字计）；设为 0 表示不获取上下文。翻译句子/段落时不获取上下文（选区即完整原文）。"
               >
                 <input
                   className="input"
@@ -2077,7 +2077,7 @@ function SettingsPage() {
             <p className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
               留空则使用默认模板。可用变量：<code>{"{text}"}</code> 选中文本、
               <code>{"{target_lang}"}</code> 目标语言、
-              <code>{"{context}"}</code> 选区上下文（前后文，长度在「常规」设置中配置，0 时不注入）。
+              <code>{"{context}"}</code> 选区上下文（仅查词时注入，长度在「常规」设置中配置，0 时不注入）。
             </p>
             <PromptEditor promptKey="translate" title="翻译" />
             <PromptEditor promptKey="explain" title="单击机器人图标（AI解释）" />

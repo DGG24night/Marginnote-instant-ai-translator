@@ -146,7 +146,7 @@ const EMPTY_CONFIG = {
   lookupCacheSize: 50,
   translateCacheSize: 50,
   targetLang: "zh-CN",
-  contextLength: 200, // prompt {context} 变量：选区前后各取 N 词（英文按单词、中文按字计；0 = 不获取上下文）
+  contextLength: 200, // prompt {context} 变量：选区前后各取 N 词（英文按单词、中文按字计；0 = 不获取上下文；仅查词任务使用，翻译不提取）
   translateWordCount: 3, // 触发翻译的单词数阈值：选区单词数 > N 走翻译，否则按查词处理（中文按字符算、英文按空格分词）
   triggerMode: "auto",
   theme: "light",

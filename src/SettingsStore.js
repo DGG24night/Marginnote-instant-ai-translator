@@ -19,7 +19,7 @@ var MNIATSettings = (function () {
       lookupCacheSize: 50,          // 查词结果缓存条数（0 = 不使用缓存）
       translateCacheSize: 50,       // AI 翻译结果缓存条数（0 = 不使用缓存）
       targetLang: "zh-CN",
-      contextLength: 200,           // prompt {context} 变量的上下文长度：选区前后各取 N 词（英文按单词、中文按字计；0 = 不获取上下文）
+      contextLength: 200,           // prompt {context} 变量的上下文长度：选区前后各取 N 词（英文按单词、中文按字计；0 = 不获取上下文；仅查词任务使用，翻译不提取）
       translateThreshold: 3,        // 触发翻译的字符数阈值：选区 trim 后字符数 > N 走翻译，否则按查词处理（默认 3，可查词组）
       triggerMode: "auto",          // auto=选中即翻译 | button=先显示悬浮按钮
       theme: "light",               // light | dark
