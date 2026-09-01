@@ -2027,6 +2027,32 @@ html.card-fit .card-body {
   margin-right: 8px;
 }
 
+/* 词态变化（复数/过去式/现在分词等）：标签+值成对，自动换行 */
+.dict-forms {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.dict-form {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.dict-form-label {
+  color: var(--text-secondary);
+}
+
+.dict-form-value {
+  color: var(--text);
+  font-weight: 500;
+}
+
 .ai-switch {
   margin-top: 8px;
 }

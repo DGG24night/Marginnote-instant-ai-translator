@@ -1169,6 +1169,16 @@ function CardPage() {
         lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);
       });
     }
+    // 词态变化（复数/过去式/现在分词等）：各查词服务按需返回，无则不输出
+    if (Array.isArray(d.wordForms) && d.wordForms.length > 0) {
+      if (d.ukphone || d.usphone || groups.length > 0) {
+        lines.push("");
+        lines.push("---");
+        lines.push("");
+      }
+      lines.push("**词态变化**");
+      lines.push(d.wordForms.map((f) => `${f.label}: ${f.value}`).join("；"));
+    }
     return lines.join("\n");
   }, []);
 
@@ -2594,6 +2604,17 @@ const onAppendChange = (e) => {
                 ));
               })()}
             </ul>
+            {/* 词态变化（复数/过去式/现在分词等）：各查词服务按需返回，无则不渲染 */}
+            {Array.isArray(state.dict.wordForms) && state.dict.wordForms.length > 0 && (
+              <div className="dict-forms">
+                {state.dict.wordForms.map((f, i) => (
+                  <span className="dict-form" key={i}>
+                    <span className="dict-form-label">{f.label}</span>
+                    <span className="dict-form-value">{f.value}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

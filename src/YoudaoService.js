@@ -60,7 +60,8 @@ var MNIATYoudao = (function () {
         word: word,
         ukphone: "",
         usphone: "",
-        translations: []
+        translations: [],
+        wordForms: []
       };
       for (var i = 0; i < entries.length; i++) {
         var meaning = cleanJunk(decodeEntities(stripTags(String(entries[i].explain || "")))).trim();
@@ -143,7 +144,8 @@ var MNIATYoudao = (function () {
       word: word,
       ukphone: "",
       usphone: "",
-      translations: []   // [{pos, meaning}]
+      translations: [],  // [{pos, meaning}]
+      wordForms: []      // [{label, value}] 词态变化（复数/过去式/现在分词等）
     };
 
     // 1) 词头：限定在 word-title 区块内找 title（避免命中"全部产品"banner 等）
@@ -198,6 +200,25 @@ var MNIATYoudao = (function () {
           result.translations.push({ pos: pos, meaning: clean });
         }
       }
+    }
+
+    // 4) 词态变化：wfs-name 标签与值 span 成对出现，两种页面结构都要兼容：
+    //   移动版 /m/result（手机 UA）：
+    //     <div class="m-word-wfs-cell"><span class="wfs-name">复数</span>
+    //       <span class="wordLine">implants</span></div>
+    //   桌面版 /result（桌面 UA 下 /m/result 被 302 到此，插件默认桌面 UA）：
+    //     <li class="word-wfs-cell-less"><p class="grey"><span class="wfs-name">复数</span>
+    //       <span class="wfs-splice"></span></p><span class="transformation">implants</span></li>
+    //   值 span 的 class 两版不同（wordLine / transformation），故同时匹配；
+    //   标签与值之间距离 < 300 字符。桌面版 <style> 里虽有同名 class，但都是
+    //   CSS 选择器（.wfs-name[data-v-...]{...}），不含 <span class="wfs-name"> 元素，不会误配。
+    //   并非所有词都有该区块（如名词无动词变形），缺失时 wordForms 保持空数组。
+    var wfRe = /<span class="wfs-name"[^>]*>([^<]*)<\/span>[\s\S]{0,300}?<span class="(?:wordLine|transformation)"[^>]*>([^<]*)<\/span>/g;
+    var wm2;
+    while ((wm2 = wfRe.exec(html)) !== null) {
+      var wfLabel = decodeEntities(stripTags(wm2[1])).trim();
+      var wfValue = decodeEntities(stripTags(wm2[2])).trim();
+      if (wfLabel && wfValue) result.wordForms.push({ label: wfLabel, value: wfValue });
     }
 
     if (result.translations.length === 0 && !result.ukphone && !result.usphone) {

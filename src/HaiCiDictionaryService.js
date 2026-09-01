@@ -44,7 +44,8 @@ var MNIATHaiCi = (function () {
       word: word,
       ukphone: "",
       usphone: "",
-      translations: []   // [{pos, meaning}]
+      translations: [],  // [{pos, meaning}]
+      wordForms: []      // [{label, value}] 词态变化（复数/过去式/现在分词等）
     };
 
     // 词头
@@ -87,6 +88,21 @@ var MNIATHaiCi = (function () {
         meaning = meaning.trim();
         if (meaning) result.translations.push({ pos: pos, meaning: meaning });
       });
+    }
+
+    // 词态变化：shape 区块内 <label>标签:</label><a>值</a> 成对出现
+    //   <div class="shape"><label>过去式:</label><a href="...">implanted</a>…</div>
+    //   并非所有词都有该区块，缺失时 wordForms 保持空数组。
+    var shi = html.indexOf('class="shape"');
+    if (shi >= 0) {
+      var shSeg = html.slice(shi, shi + 3000);
+      var shRe = /<label>([^<]*)<\/label>\s*<a[^>]*>([\s\S]*?)<\/a>/g;
+      var shm;
+      while ((shm = shRe.exec(shSeg)) !== null) {
+        var label = decodeEntities(stripTags(shm[1])).trim().replace(/[:：]$/, "");
+        var value = decodeEntities(stripTags(shm[2])).trim();
+        if (label && value) result.wordForms.push({ label: label, value: value });
+      }
     }
 
     // 中文词兜底：拼音音标 + layout cn 释义
