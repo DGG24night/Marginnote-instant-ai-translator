@@ -52,7 +52,8 @@ var MNIATBing = (function () {
       word: word,
       ukphone: "",
       usphone: "",
-      translations: []   // [{pos, meaning}]
+      translations: [],  // [{pos, meaning}]
+      wordForms: []      // [{label, value}] 词态变化（复数/过去式/现在分词等）
     };
 
     // 词头（兜底用，通常直接用选中词）
@@ -98,6 +99,21 @@ var MNIATBing = (function () {
       defs.forEach(function (d) {
         result.translations.push({ pos: pos, meaning: d });
       });
+    }
+
+    // 词态变化：hd_if 区块内 <span class="b_primtxt">标签：</span><a>值</a> 成对出现
+    //   <div class="hd_if"><span class="b_primtxt">过去式：</span><a ...>implanted</a>…</div>
+    //   qdef 区块内 hd_if 仅词态一处；并非所有词都有该区块，缺失时 wordForms 保持空数组。
+    var hi = region.indexOf('class="hd_if"');
+    if (hi >= 0) {
+      var hSeg = region.slice(hi, hi + 3000);
+      var hRe = /<span class="b_primtxt">([^<]*)<\/span>\s*<a[^>]*>([\s\S]*?)<\/a>/g;
+      var hm;
+      while ((hm = hRe.exec(hSeg)) !== null) {
+        var label = decodeEntities(stripTags(hm[1])).trim().replace(/[:：]$/, "");
+        var value = decodeEntities(stripTags(hm[2])).trim();
+        if (label && value) result.wordForms.push({ label: label, value: value });
+      }
     }
 
     // 未找到判定：没有音标且没有真实词性释义（仅剩「网络」释义）→ 视为未收录

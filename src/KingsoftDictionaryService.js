@@ -55,7 +55,9 @@ var MNIATKingsoft = (function () {
 
   // 从 wordInfo 抽出结构化词条
   // 返回 null = 未命中（拼错/不存在）
-  function parseResult(data, word) {
+  // html 为页面原始 HTML（可选）：词态变化不在 __NEXT_DATA__ 里
+  // （exchanges 数组无标签），需从 SSR 渲染的 Morphology 区块解析。
+  function parseResult(data, word, html) {
     if (!data || typeof data !== "object") return null;
     var wordInfo;
     try {
@@ -83,7 +85,8 @@ var MNIATKingsoft = (function () {
       // 发音链接：优先真实词库音频，回退 TTS
       ukMp3: normalizeURL(sym.ph_en_mp3) || normalizeURL(sym.ph_tts_mp3),
       usMp3: normalizeURL(sym.ph_am_mp3) || normalizeURL(sym.ph_tts_mp3),
-      translations: []
+      translations: [],
+      wordForms: []      // [{label, value}] 词态变化（复数/过去式/现在分词等）
     };
 
     // 主释义：symbols[0].parts = [{ part: "n.", means: ["界面", "接口", ...] }, ...]
@@ -135,6 +138,30 @@ var MNIATKingsoft = (function () {
       if (tr) result.translations.push({ pos: "", meaning: tr });
     }
 
+    // 词态变化：SSR HTML 的「词态变化」折叠块内 Morphology 列表，
+    // 逐条 <li>标签<!-- -->:<!-- --> <span ...>值</span>;</li>
+    //   <ul class="Morphology_morphology__vNvkI"><li>复数<!-- -->:<!-- -->
+    //     <span class="jsx-..." href="/word?w=implants">implants</span>;</li>…</ul>
+    //   class 后缀为构建哈希（会变化），故只按前缀 Morphology_morphology 匹配；
+    //   并非所有词都有该区块，缺失时 wordForms 保持空数组。
+    if (html && typeof html === "string") {
+      var moStart = html.indexOf("Morphology_morphology");
+      if (moStart >= 0) {
+        var moEnd = html.indexOf("</ul>", moStart);
+        if (moEnd < 0) moEnd = moStart + 3000;
+        var moSeg = html.slice(moStart, moEnd);
+        var liRe = /<li>([\s\S]*?)<\/li>/g;
+        var lm;
+        while ((lm = liRe.exec(moSeg)) !== null) {
+          var raw = lm[1];
+          var label = raw.split("<!--")[0].trim().replace(/[:：]$/, "");
+          var valM = raw.match(/<span[^>]*>([^<]*)<\/span>/);
+          var value = valM ? valM[1].trim() : "";
+          if (label && value) result.wordForms.push({ label: label, value: value });
+        }
+      }
+    }
+
     if (result.translations.length === 0 && !result.ukphone && !result.usphone) {
       return null;
     }
@@ -156,8 +183,9 @@ var MNIATKingsoft = (function () {
         if (res.status < 200 || res.status >= 300) {
           throw new Error("金山词霸接口 HTTP " + res.status);
         }
-        var data = parseNextData(res.text());
-        var parsed = parseResult(data, word);
+        var text = res.text();
+        var data = parseNextData(text);
+        var parsed = parseResult(data, word, text);
         if (!parsed) {
           throw new Error("未找到该单词的释义");
         }
