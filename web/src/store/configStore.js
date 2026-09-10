@@ -34,6 +34,10 @@ function sanitizeConfig(config) {
   return changed ? { ...config, providers } : config;
 }
 
+// 最近一次同步给插件的面板主题：卡片页每次新任务都会 load() 刷新配置，
+// 主题未变时不重复发送 bridge 命令
+let lastPanelTheme = null;
+
 export const PROVIDER_PRESETS = [
   {
     name: "DeepSeek",
@@ -156,6 +160,7 @@ const EMPTY_CONFIG = {
   lookupProvider: "youdao", // youdao | bing | haici | ai（查词服务提供商）
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // 流式输出：AI 回复逐字实时显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
+  typewriterEffect: true, // 打字机效果：流式期间按固定节拍逐字揭示，输出更顺滑（关闭 = 收到多少显示多少）
   rememberCardSize: false,
   shortcuts: { lookup: "d", note: "n", save: "alt+s", chat: "c", historyPrev: "ArrowUp,ArrowLeft", historyNext: "ArrowDown,ArrowRight" }, // 结果卡片内快捷键
   noteIncludeResult: true, // 笔记编辑：自动附带查词/翻译结果（以 --- 分隔）
@@ -205,6 +210,12 @@ export const useConfigStore = create((set, get) => ({
     const { config } = get();
     document.documentElement.dataset.theme = config.theme || "light";
     document.documentElement.dataset.fontsize = config.fontSize || "medium";
+    // 面板顶栏（原生标题栏）同步主题：banner 不是 DOM，CSS 覆盖不到
+    const theme = config.theme || "light";
+    if (theme !== lastPanelTheme) {
+      lastPanelTheme = theme;
+      MNBridge.send("applyPanelTheme", { theme }).catch(() => {});
+    }
   },
 
   // 局部更新并持久化；updater 接收 config 副本，直接改

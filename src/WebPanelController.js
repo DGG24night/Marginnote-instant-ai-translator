@@ -302,6 +302,29 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     };
   }
 
+  // 面板顶栏（banner）跟随「设置 → 通用 → 主题」：标题栏/标题/关闭按钮/容器与 WebView 底色
+  // 都是原生视图 + 原生背景，CSS 覆盖不到，暗色主题下需在此改色（否则面板顶部残留一条白条）。
+  // 视图尚未创建时只记录主题，由 setupWebPanelUI 兜底应用。
+  function applyTheme(controller, theme) {
+    if (!controller) return false;
+    controller._theme = theme === "dark" ? "dark" : "light";
+    if (!controller.titleBar) return false;
+    const dark = controller._theme === "dark";
+    const barColor = dark
+      ? UIColor.colorWithWhiteAlpha(0.11, 1)   // ≈ #1c1c1e，与设置页 body 背景一致
+      : UIColor.colorWithWhiteAlpha(0.96, 1);
+    const bgColor = dark ? barColor : UIColor.whiteColor();
+    controller.containerView.backgroundColor = bgColor;
+    controller.titleBar.backgroundColor = barColor;
+    controller.titleLabel.textColor = dark ? UIColor.colorWithWhiteAlpha(0.92, 1) : UIColor.darkGrayColor();
+    controller.closeButton.setTitleColorForState(
+      dark ? UIColor.colorWithWhiteAlpha(0.55, 1) : UIColor.grayColor(),
+      0
+    );
+    controller.webView.backgroundColor = bgColor;
+    return true;
+  }
+
   function setupWebPanelUI(controller) {
     controller.navigationItem.title = "Instant AI Translator";
     controller.view.autoresizingMask = 0;
@@ -397,6 +420,9 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     resizeRecognizer.requireGestureRecognizerToFail(resizeDoubleTap);
 
     controller.containerView.addSubview(controller.resizeHandle);
+
+    // 初始主题：优先面板运行期已收到的主题，其次读已保存配置（首次打开即是暗色时不留白条）
+    applyTheme(controller, controller._theme || MNIATSettings.load().theme);
   }
 
   function togglePanelMaximize(controller) {
@@ -644,6 +670,7 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     controller.view.autoresizingMask = 0;
     controller._isMaximized = false;
     applySavedOrDefaultFrame(controller);
+    applyTheme(controller, MNIATSettings.load().theme); // 每次显示时按最新配置校正顶栏主题
     controller.view.hidden = false;
     NSUserDefaults.standardUserDefaults().setObjectForKey(true, PANEL_ON_KEY);
   }
@@ -675,5 +702,6 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
     hidePanel,
     shouldRestorePanel,
     ensureLayout,
+    applyTheme,
   };
 })();

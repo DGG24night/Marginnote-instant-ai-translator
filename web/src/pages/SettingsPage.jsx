@@ -1495,6 +1495,17 @@ function SettingsPage() {
                 />
                 流式输出
               </label>
+              <label
+                className="checkbox"
+                title="开启后 AI 回复与思考过程在流式输出期间按固定节拍逐字显示，观感更顺滑（关闭则收到多少显示多少）。仅影响显示效果，缓存命中/历史回放等一次性结果不受影响。"
+              >
+                <input
+                  type="checkbox"
+                  checked={config.typewriterEffect !== false}
+                  onChange={(e) => update((c) => { c.typewriterEffect = e.target.checked; })}
+                />
+                打字机效果
+              </label>
               <label className="checkbox">
                 <input
                   type="checkbox"

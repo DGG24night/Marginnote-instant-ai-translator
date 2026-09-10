@@ -29,6 +29,7 @@ var MNIATSettings = (function () {
       lookupProvider: "youdao",     // youdao | bing | haici | kingsoft | ai（查词服务提供商；ai = 直接用 AI 解释）
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // 流式输出：AI 回复走 delegate 真流式逐字显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
+      typewriterEffect: true,       // 打字机效果：流式期间前端按固定节拍逐字揭示，输出更顺滑（关闭 = 收到多少显示多少）
       rememberCardSize: false,      // 结果卡片：记住并恢复上次手动调整的大小（默认关闭）
       shortcuts: {                  // 结果卡片内快捷键（可在设置中自定义）
         lookup: "d",                // 快速查词：聚焦搜索框，Enter 查询
@@ -120,6 +121,9 @@ var MNIATSettings = (function () {
 
     // 笔记附带结果开关深兜底（默认开启）
     merged.noteIncludeResult = raw.noteIncludeResult === false ? false : true;
+
+    // 打字机效果开关深兜底（老配置无该字段时默认开启）
+    merged.typewriterEffect = raw.typewriterEffect === false ? false : true;
 
     // AI 问答历史容量深兜底（老配置无该字段时默认 50；0 = 不保存历史，上限 500）
     merged.chatHistorySize =

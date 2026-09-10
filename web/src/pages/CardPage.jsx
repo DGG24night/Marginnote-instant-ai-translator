@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import MNBridge from "../lib/mnBridge";
 import { renderMarkdown } from "../lib/markdown";
+import { useTypewriterText } from "../lib/typewriter";
 import { useConfigStore } from "../store/configStore";
 
 // 滚动条自动隐藏：页面静止时滚动条透明（见 styles.css 的 ::-webkit-scrollbar 覆写），
@@ -410,6 +411,17 @@ function CardPage() {
   const histNavAppliedRef = useRef(""); // 快捷键历史导航：最近应用条目的原文（区分历史回放与新任务）
   const shortcutsRef = useRef(null); // 最新快捷键处理函数（每次渲染重建，监听器只绑一次）
   const { config, load, update } = useConfigStore();
+
+  // 打字机平滑显示（设置「常规 → 通用 → 打字机效果」）：流式进行中按固定节拍逐字揭示，
+  // 让 80ms 合帧到达的文本看起来连续；流式结束 / 缓存命中 / 历史回放等一次性结果直接全文显示。
+  // 覆盖四处流式文本：结果区正文与思考块、AI 对话回答草稿与思考块。
+  // 仅用于展示：复制、建卡、笔记、对话存档仍取原始文本（state.accumulated / reasonDraft / chatDraft 等）。
+  const typewriterOn = config.typewriterEffect !== false;
+  const streamTypewriter = typewriterOn && (state.status === "loading" || state.status === "streaming");
+  const displayAccumulated = useTypewriterText(state.accumulated, streamTypewriter);
+  const displayReasonDraft = useTypewriterText(reasonDraft, streamTypewriter);
+  const displayChatDraft = useTypewriterText(chatDraft, typewriterOn && chatSending);
+  const displayChatReasonDraft = useTypewriterText(chatReasonDraft, typewriterOn && chatSending);
 
   // 显示发音提示，几秒后自动消失
   const showHint = useCallback((msg) => {
@@ -1634,11 +1646,11 @@ function CardPage() {
     reAnsLongRef.current = false;
   };
 
-  // 对话消息更新后滚动到底部（最新消息可见）
+  // 对话消息更新后滚动到底部（最新消息可见；打字机逐字揭示时同样跟随）
   useEffect(() => {
     const list = chatListRef.current;
     if (list) list.scrollTop = list.scrollHeight;
-  }, [chatMessages, chatDraft, chatOpen]);
+  }, [chatMessages, chatDraft, displayChatDraft, chatOpen]);
 
   // 机器人长按阈值（同「重新生成」400ms，早于系统长按手势）
   const ROBOT_LONG_PRESS_MS = 400;
@@ -2427,7 +2439,7 @@ const onAppendChange = (e) => {
               {/* 思考进行中（chatReasoning 流式）：实时展示，正文开始后自动折叠 */}
               {chatSending && chatReasonDraft && (
                 <ReasonBlock
-                  text={chatReasonDraft}
+                  text={displayChatReasonDraft}
                   open={chatReasonOpen}
                   onToggle={setChatReasonOpen}
                   live={!chatDraft}
@@ -2436,7 +2448,7 @@ const onAppendChange = (e) => {
               {chatDraft && (
                 <div
                   className="chat-msg chat-msg-assistant"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(chatDraft) }}
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(displayChatDraft) }}
                 />
               )}
             </div>
@@ -2527,7 +2539,7 @@ const onAppendChange = (e) => {
         {!noteOpen && !chatOpen && state.status === "loading" && (
           reasonDraft ? (
             // 思考进行中：实时展示思考内容，替代加载行（正文到达后切到结果区渲染并自动折叠）
-            <ReasonBlock text={reasonDraft} open={reasonOpen} onToggle={setReasonOpen} live />
+            <ReasonBlock text={displayReasonDraft} open={reasonOpen} onToggle={setReasonOpen} live />
           ) : (
             <div className="card-loading">
               <span className="spinner" />
@@ -2539,13 +2551,13 @@ const onAppendChange = (e) => {
         {!noteOpen && !chatOpen && (state.status === "streaming" || state.status === "done") && (
           <div className="card-result">
             <ReasonBlock
-              text={reasonDraft}
+              text={displayReasonDraft}
               open={reasonOpen}
               onToggle={setReasonOpen}
               live={state.status === "streaming" && !state.accumulated}
             />
             <span
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(displayAccumulated) }}
             />
             {state.status === "streaming" && <span className="cursor">▍</span>}
           </div>
@@ -2634,8 +2646,8 @@ const onAppendChange = (e) => {
           ref={measureRef}
         >
           {/* 思考块与结果区同参渲染：折叠/展开状态一致，高度测量才准确 */}
-          <ReasonBlock text={reasonDraft} open={reasonOpen} live={false} />
-          <span dangerouslySetInnerHTML={{ __html: renderMarkdown(state.accumulated) }} />
+          <ReasonBlock text={displayReasonDraft} open={reasonOpen} live={false} />
+          <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayAccumulated) }} />
         </div>
       )}
 

@@ -34,6 +34,19 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATPrompts.defaults;
   }
 
+  // 面板顶栏主题（banner）：设置页/卡片页应用外观配置时调用。
+  // 标题栏是原生视图（CSS 覆盖不到），暗色主题下由插件侧改色；
+  // 卡片页发来的命令经 addon.webController 定位到面板控制器。
+  function applyPanelTheme(context, payload) {
+    const theme = payload && payload.theme === "dark" ? "dark" : "light";
+    const panel = context && context.kind === "panel"
+      ? context.controller
+      : (context && context.addon && context.addon.webController) || null;
+    if (!panel) return { applied: false };
+    __MN_WEB_API_MNInstantAITranslatorAddon.applyTheme(panel, theme);
+    return { applied: true };
+  }
+
   // ---------- 配置备份与同步 ----------
 
   // 导出：写临时文件并弹出系统保存面板，返回 { ok, bytes, fileName }
@@ -286,6 +299,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     getConfig,
     saveConfig,
     getDefaultPrompts,
+    applyPanelTheme,
     exportConfig,
     exportConfigToClipboard,
     importConfig,
