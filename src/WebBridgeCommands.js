@@ -22,11 +22,25 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATSettings.load();
   }
 
+  // 配置写入（saveConfig / 导入配置）后同步划词监听启停：
+  // 查词与翻译都关闭 → 停止监听（插件完全静默，不弹诊断 HUD）；任一开启 → 恢复监听。
+  // 实现在插件实例 syncSelectionMonitor（面板命令的 context.addon 即插件实例）。
+  function syncMonitorAfterConfigChange(context) {
+    try {
+      if (context && context.addon && typeof context.addon.syncSelectionMonitor === "function") {
+        context.addon.syncSelectionMonitor();
+      }
+    } catch (e) {
+      console.log("[MNIATBridge] sync selection monitor failed: " + e);
+    }
+  }
+
   function saveConfig(context, payload) {
     var ok = MNIATSettings.save(payload);
     if (!ok) {
       throw new Error("配置保存失败，请查看日志");
     }
+    syncMonitorAfterConfigChange(context);
     return { saved: true };
   }
 
@@ -59,18 +73,29 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATConfigSync.exportConfigToClipboard();
   }
 
-  // 导入（粘贴方式）：payload.json 为配置文本；整体覆盖（导入前自动备份 config.backup.json）
+  // 粘贴方式导入（文本）：payload.json 为配置文本；整体覆盖（导入前自动备份 config.backup.json）
   function importConfig(context, payload) {
     var text = payload && payload.json;
     if (!text || typeof text !== "string" || !text.trim()) {
       throw new Error("缺少导入的配置内容");
     }
-    return MNIATConfigSync.importConfig(text);
+    var result = MNIATConfigSync.importConfig(text);
+    if (result && result.ok) {
+      // 导入整体覆盖配置：查词/翻译开关可能变化，同步监听启停
+      syncMonitorAfterConfigChange(context);
+    }
+    return result;
   }
 
-  // 导入（文件方式）：弹系统文件选择器，选中配置 JSON 后读取导入
+  // 导入（文件方式）：弹系统文件选择器，选中配置 JSON 后读取导入。
+  // 导入成功后同步监听启停（同 importConfig：整体覆盖可能改变查词/翻译开关）。
   function importConfigFromFile(context) {
-    return MNIATConfigSync.importConfigFromFile(context);
+    return MNIATConfigSync.importConfigFromFile(context).then(function (result) {
+      if (result && result.ok) {
+        syncMonitorAfterConfigChange(context);
+      }
+      return result;
+    });
   }
 
   function testProvider(context, payload) {

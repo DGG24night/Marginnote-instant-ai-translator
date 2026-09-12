@@ -379,15 +379,44 @@ var MNIATSelectionMonitor = (function () {
       pendingNoteId = "";
       pendingSince = 0;
       menuWasVisible = false;
-      timer = NSTimer.scheduledTimerWithTimeInterval(POLL_INTERVAL, true, function () {
-        tick();
-      });
-      console.log("[MNIATMonitor] started, interval=" + POLL_INTERVAL + "s");
+      // 残留选区预置（2026-09-12）：设置变更后重启监听时，文档里可能仍残留上一次
+      // 的 selectionText（用户刚在设置面板操作、没有新选中）。若不清除，1.5s 超时
+      // 兜底会把它当「新稳定选区」自动补触发一次翻译。若当前仍有文本，直接记为
+      // 「上次已触发」，下次 tick 读到相同文本会走去重分支；新选区（文本不同）不受
+      // 影响，正常触发。
+      var residual = null;
+      try {
+        residual = readSelectionText();
+      } catch (e) { /* 启动阶段环境瞬时状态，忽略 */ }
+      if (residual) {
+        lastFiredText = residual;
+        lastFiredAt = Date.now();
+        console.log("[MNIATMonitor] started, primed against residual selection \"" +
+          residual.slice(0, 40) + "\"");
+      }
+      try {
+        timer = NSTimer.scheduledTimerWithTimeInterval(POLL_INTERVAL, true, function () {
+          tick();
+        });
+      } catch (e) {
+        // 定时器创建失败：置空并留日志，下一次 syncSelectionMonitor 可再试
+        console.log("[MNIATMonitor] start: schedule timer error: " + e);
+      }
+      if (timer) console.log("[MNIATMonitor] started, interval=" + POLL_INTERVAL + "s");
     },
 
     stop: function () {
       if (timer) {
-        timer.invalidate();
+        // 加固（2026-09-12）：invalidate 在 JSB 桥接异常时可能抛错，未捕获会把
+        // timer 留在「非空但已失效」状态 → isRunning()(!!timer) 恒为 true → 之后
+        // syncSelectionMonitor 的恢复分支永远跳过 start，监听彻底不工作，直到
+        // 重开笔记本（notebookWillOpen 无条件 start）才恢复。因此 invalidate 必须
+        // try/catch，且无论成败都把 timer 置空，保证 isRunning() 永远反映真实状态。
+        try {
+          timer.invalidate();
+        } catch (e) {
+          console.log("[MNIATMonitor] stop: invalidate error: " + e);
+        }
         timer = null;
         console.log("[MNIATMonitor] stopped");
       }
