@@ -24,11 +24,25 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
 
   // 配置写入（saveConfig / 导入配置）后同步划词监听启停：
   // 查词与翻译都关闭 → 停止监听（插件完全静默，不弹诊断 HUD）；任一开启 → 恢复监听。
-  // 实现在插件实例 syncSelectionMonitor（面板命令的 context.addon 即插件实例）。
+  // 双路径（2026-09-15，修复「关闭查词/翻译再开启后须重进文档才恢复」）：
+  //   路径一：经插件实例 addon.syncSelectionMonitor（携带权威 self.window）；
+  //   路径二：直连 MNIATSelectionMonitor.sync——不依赖 addon 实例属性在 WebView
+  //           拦截上下文里的可达性，监听器用自身持久化的最近窗口/回调重启。
+  // 路径一调用链任一环节静默失败时由路径二兜底；两条都失败时，插件侧对账心跳
+  // （notebookWillOpen 启动，每 0.5s）保证监听最迟约 0.5s 后恢复。
   function syncMonitorAfterConfigChange(context) {
     try {
       if (context && context.addon && typeof context.addon.syncSelectionMonitor === "function") {
         context.addon.syncSelectionMonitor();
+      }
+    } catch (e) {
+      console.log("[MNIATBridge] sync via addon instance failed: " + e);
+    }
+    try {
+      var running = MNIATSelectionMonitor.sync();
+      if (!running) {
+        // 查词/翻译都关闭（或暂无可监控窗口）：收起悬浮触发按钮
+        MNIATFloatingCard.hideTrigger();
       }
     } catch (e) {
       console.log("[MNIATBridge] sync selection monitor failed: " + e);

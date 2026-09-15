@@ -21,6 +21,10 @@ var MNIATSelectionMonitor = (function () {
   var timer = null;
   var targetWindow = null;
   var callbacks = {};
+  // 最近一次 start 的窗口与回调：stop 时不清空，供 sync() 在「配置变更后重启」场景
+  // 兜底使用（bridge 上下文可能拿不到插件实例/self.window，见 sync 注释）。
+  var lastKnownWindow = null;
+  var lastCallbacks = {};
 
   var lastFiredText = "";
   var lastFiredNoteId = ""; // 最近一次触发来源的焦点笔记 ID（区分「点击空白残留」与「新选中卡片」）
@@ -368,6 +372,8 @@ var MNIATSelectionMonitor = (function () {
       this.stop();
       targetWindow = win;
       callbacks = cbs || {};
+      if (win) lastKnownWindow = win; // 持久化窗口：stop 后保留，sync 重启兜底用
+      lastCallbacks = callbacks;
       lastFiredText = "";
       lastFiredNoteId = "";
       lastFiredAt = 0;
@@ -426,6 +432,46 @@ var MNIATSelectionMonitor = (function () {
 
     isRunning: function () {
       return !!timer;
+    },
+
+    // 按当前配置对账监听启停（2026-09-15，配置变更 / 文档打开 / 插件侧对账心跳共用）：
+    //   查词与翻译都关闭 → 停止（幂等）；任一开启且监听未运行 → 用 hint（或最近已知
+    //   窗口/回调）重启。返回 true = 监听当前处于运行状态。
+    // 背景：从设置面板 bridge 上下文（UIWebView URL 拦截回调）重启监听的调用链
+    // （saveConfig → addon.syncSelectionMonitor → start），在部分环境下会静默失败
+    // （addon 实例属性可达性 / self.window / 定时器调度任一环节失效即失败且无报错），
+    // 表现为「关闭查词/翻译再开启后划词无响应，须退出重进文档才恢复」。
+    // sync 不依赖插件实例与 self.window：未传 hint 时沿用 notebookWillOpen 注入的
+    // 最近窗口与回调，调用方（bridge 命令 / 心跳）只需触发即可。
+    sync: function (hintWin, hintCallbacks) {
+      // 先记录 hint（即使当前配置要求停止）：应用重启时两个开关都是关闭的话，
+      // 监听从未 start、lastKnownWindow 为空，之后开启开关时兜底路径将无窗口可用。
+      if (hintWin) lastKnownWindow = hintWin;
+      if (hintCallbacks && typeof hintCallbacks.onSelection === "function") {
+        lastCallbacks = hintCallbacks;
+      }
+      var config = MNIATSettings.load();
+      var shouldRun = !(config.lookupEnabled === false && config.translateEnabled === false);
+      if (!shouldRun) {
+        this.stop();
+        return false;
+      }
+      if (timer) {
+        // 已在运行：核对定时器真实有效（防御「非空但已失效」的历史残留态）
+        var timerAlive = true;
+        try {
+          timerAlive = timer.isValid === false ? false : true;
+        } catch (e) {
+          timerAlive = true; // 桥接读取失败时按有效处理，避免误重启重置去重状态
+        }
+        if (timerAlive) return true;
+        this.stop(); // 定时器已失效：清理后走下方重启
+      }
+      var win = hintWin || lastKnownWindow;
+      var cbs = hintCallbacks || lastCallbacks;
+      if (!win || !cbs || typeof cbs.onSelection !== "function") return false;
+      this.start(win, cbs);
+      return this.isRunning();
     },
 
     // 卡片关闭后重置上次触发标记（2026-08-17 修复）：
