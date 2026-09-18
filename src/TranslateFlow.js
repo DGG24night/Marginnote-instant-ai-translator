@@ -1278,26 +1278,30 @@ var MNIATFlow = (function () {
       return !!appendSession;
     },
 
-    // 进入拼接模式：双击图钉触发。取消当前翻译（卡片保留），以最近选区为拼接起点，
+    // 进入拼接模式：双击（或长按）图钉触发。取消当前翻译（卡片保留），以最近选区为拼接起点，
     // 固定卡片（拼接期间点空白不关闭），通知前端切换到拼接编辑界面。
+    // win 允许为空（2026-09-18）：bridge 上下文中窗口可能拿不到，用 lastWin 兜底；
+    // 拼接模式下每次划词都会用监听回调带回的窗口刷新 appendSession.win，故不会影响后续追加。
     enterAppendMode: function (win) {
       // 拼接起点：当前任务的文本（卡片显示中必有）；兜底读当前选区
       var text = "";
+      var targetWin = win || lastWin || null;
       if (currentJob && currentJob.text) {
         text = currentJob.text;
-      } else {
+      } else if (targetWin) {
         try {
-          var studyController = Application.sharedInstance().studyController(win);
+          var studyController = Application.sharedInstance().studyController(targetWin);
           var dc = studyController && studyController.readerController &&
             studyController.readerController.currentDocumentController;
           if (dc && dc.selectionText) text = String(dc.selectionText).trim();
         } catch (e) { /* 忽略 */ }
       }
       this.cancelCurrent();
-      appendSession = { win: win };
+      appendSession = { win: targetWin };
       MNIATFloatingCard.setPinned(true); // 拼接期间固定：划词追加时点空白不关闭卡片
       pushEvent({ type: "appendMode", text: text });
-      console.log("[MNIATFlow] append mode entered, first=\"" + String(text).slice(0, 40) + "\"");
+      console.log("[MNIATFlow] append mode entered, win=" + (targetWin ? "yes" : "no") +
+        ", first=\"" + String(text).slice(0, 40) + "\"");
       return { entered: true, text: text };
     },
 

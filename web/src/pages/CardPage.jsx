@@ -78,6 +78,18 @@ const SPEAKER_PATHS = [
   "M758.869333 245.888a32.597333 32.597333 0 0 1 45.696-5.973333c71.509333 54.826667 105.813333 156.928 105.813334 270.165333 0 96.554667-49.834667 226.730667-105.642667 270.08a32.597333 32.597333 0 1 1-39.978667-51.413333c37.973333-29.525333 80.469333-140.544 80.469334-218.666667 0-95.018667-28.032-178.346667-80.341334-218.496a32.597333 32.597333 0 0 1-5.973333-45.653333z",
 ];
 
+// 图钉交互时序（2026-09-18 修复「双击图钉无法进入拼接模式」，原理见 onPinClick 注释）：
+//   PIN_DOUBLE_CLICK_MS：单击/双击判定窗口——第二次点击落在窗口内判为双击（进入/退出拼接模式），
+//     否则窗口结束后执行单击动作（固定/取消固定）。窗口需覆盖系统双击间隔（默认约 500ms），
+//     取 450ms 兼顾判定成功率与单击手感。
+//   PIN_LONG_PRESS_MS：按住图钉不动达此时长 → 直接切换拼接模式（不依赖双击判定的兜底入口）。
+//   PIN_TOGGLE_LATCH_MS：触发闩锁——同一次双击可能同时命中「click 自判定 / e.detail / 原生
+//     dblclick」多条路径（彼此相差仅数毫秒），闩锁期内忽略重复触发，避免「刚进入拼接模式
+//     又被立刻退出」。闩锁需远小于用户再次双击的间隔（实测 700ms 的二次双击会被吞掉），故取 250ms。
+const PIN_DOUBLE_CLICK_MS = 450;
+const PIN_LONG_PRESS_MS = 600;
+const PIN_TOGGLE_LATCH_MS = 250;
+
 // 图钉（用户提供的 tuding-2.svg）：active=固定（主题色高亮，由 CSS .pin-btn.active 控制），未固定=次要色
 const PIN_PATH =
   "M742.826667 398.890667l-28.16-28.16v-102.826667a246.101333 246.101333 0 0 0 42.666666-139.946667 32 32 0 0 0-32-32H298.666667a32 32 0 0 0-32 32 245.973333 245.973333 0 0 0 42.666666 139.989334v102.741333l-28.16 28.16a338.773333 338.773333 0 0 0-99.84 241.109333c0 17.664 14.336 32 32 32h266.666667V896a32 32 0 1 0 64 0v-224H810.666667a32 32 0 0 0 32-32 338.688 338.688 0 0 0-99.84-241.109333z m-495.658667 209.066666A274.773333 274.773333 0 0 1 326.4 444.16l37.546667-37.504a32 32 0 0 0 9.386666-22.613333v-128a31.872 31.872 0 0 0-9.386666-22.613334 148.394667 148.394667 0 0 1-30.421334-73.301333h356.992a149.077333 149.077333 0 0 1-30.464 73.386667 32 32 0 0 0-9.386666 22.613333v128c0 8.490667 3.370667 16.64 9.386666 22.613333l37.546667 37.504a274.645333 274.645333 0 0 1 79.232 163.84l-529.664-0.128z";
@@ -388,6 +400,11 @@ function CardPage() {
   const regenTouchCleanupRef = useRef(null); // 按钮卸载时解绑原生 touch 监听
   const cardLimitsRef = useRef(null); // 卡片高度上下限 { min, max }（cardReady 返回，测量钳制用）
   const pinTimerRef = useRef(null); // 图钉单击/双击判定计时器
+  const pinLastClickAtRef = useRef(0); // 上一次图钉点击时间（click 自判定双击用，不依赖原生 dblclick）
+  const pinAppendFiredAtRef = useRef(0); // 拼接模式切换触发时刻（多路径触发闩锁）
+  const pinPressTimerRef = useRef(null); // 图钉长按计时器（兜底入口：长按切换拼接模式）
+  const pinLongFiredRef = useRef(false); // 图钉长按已触发（抑制随后的 click/dblclick）
+  const appendToggleBusyRef = useRef(false); // 拼接模式切换进行中（忽略并发触发，避免进入/退出交错）
   const prevPinnedRef = useRef(false); // 进入拼接模式前的 pinned 状态：「开始翻译」后据此决定是否恢复
   const appendTextareaRef = useRef(null); // 拼接编辑区（auto-grow 用）
   const noteTextareaRef = useRef(null); // 笔记编辑区（聚焦用；高度由 flex 布局接管）
@@ -2041,57 +2058,144 @@ function CardPage() {
     MNBridge.send("setCardPinned", { pinned: next }).catch(() => {});
   };
 
-  // ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ----------
-  // 单击图钉 = 固定/取消固定（延迟 280ms 判定，避免与双击冲突）；
+  // ---------- 拼接模式（跨页段落手动拼接翻译） ----------
+  // 单击图钉 = 固定/取消固定（延迟 PIN_DOUBLE_CLICK_MS 判定，避免与双击冲突）；
   // 双击图钉 = 进入/退出拼接模式（进入时固定卡片）。
 
+  // 切换拼接模式（进入/退出）：busy 防并发（进入与退出交错会互相抵消，界面看起来「没反应」）
   const toggleAppendMode = async () => {
-    if (appendMode) {
-      // 退出拼接模式（未翻译时）：清编辑区，通知插件清会话，
-      // 恢复进入拼接模式前的 pinned 状态（拼接期间只是临时固定）
-      setAppendMode(false);
-      setAppendText("");
-      const wasPinned = !!prevPinnedRef.current;
-      if (!wasPinned) {
-        setPinned(false);
-        MNBridge.send("setCardPinned", { pinned: false }).catch(() => {});
-      }
-      try {
-        await MNBridge.send("exitAppendMode");
-      } catch (e) { /* 插件已兜底 */ }
-      return;
-    }
-    // 进入拼接模式：记录原 pinned 状态（用于「开始翻译」后恢复），
-    // 插件取消当前翻译、固定卡片，并返回最近选区文本作为拼接起点
-    prevPinnedRef.current = pinned;
+    if (appendToggleBusyRef.current) return;
+    appendToggleBusyRef.current = true;
     try {
-      const r = await MNBridge.send("enterAppendMode");
-      setAppendMode(true);
-      setAppendText((r && r.text) || "");
-      setPinned(true); // 拼接期间临时固定：划词追加时点空白不关闭卡片
-    } catch (e) { /* 插件已兜底 */ }
+      if (appendMode) {
+        // 退出拼接模式（未翻译时）：清编辑区，通知插件清会话，
+        // 恢复进入拼接模式前的 pinned 状态（拼接期间只是临时固定）
+        setAppendMode(false);
+        setAppendText("");
+        const wasPinned = !!prevPinnedRef.current;
+        if (!wasPinned) {
+          setPinned(false);
+          MNBridge.send("setCardPinned", { pinned: false }).catch(() => {});
+        }
+        try {
+          await MNBridge.send("exitAppendMode");
+        } catch (e) { /* 插件已兜底 */ }
+        return;
+      }
+      // 进入拼接模式：记录原 pinned 状态（用于「开始翻译」后恢复），
+      // 插件取消当前翻译、固定卡片，并返回最近选区文本作为拼接起点
+      prevPinnedRef.current = pinned;
+      try {
+        const r = await MNBridge.send("enterAppendMode");
+        setAppendMode(true);
+        setAppendText((r && r.text) || "");
+        setPinned(true); // 拼接期间临时固定：划词追加时点空白不关闭卡片
+      } catch (e) {
+        // 进入失败不再静默（此前 catch 吞掉错误，表现为「双击图钉毫无反应」）：
+        // 把插件返回的失败原因显示出来，便于定位（如「缺少窗口上下文」/命令不存在）
+        const reason = typeof e === "string"
+          ? e
+          : ((e && (e.message || e.command)) ? String(e.message || e.command) : "未知错误");
+        showHint("进入拼接模式失败：" + reason);
+      }
+    } finally {
+      appendToggleBusyRef.current = false;
+    }
   };
 
-  const onPinClick = () => {
+  // ---------- 图钉交互：单击 = 固定/取消固定；双击/长按 = 进入/退出拼接模式 ----------
+  // 2026-09-18 修复「双击图钉无法进入拼接模式」：
+  //   旧实现把「进入拼接模式」挂在原生 dblclick 事件上。卡片 WebView（macOS UIWebView）里
+  //   该事件不可靠：双击第一下会让按钮获得 DOM 焦点，第二次 mousedown 触达卡片自带的
+  //   document 级 mousedown 处理（见 onCardMouseDown：为保住卡片窗口焦点而 blur 当前元素）
+  //   打断了原生双击序列，dblclick 不派发 → 界面只看到图钉高亮闪一下，拼接编辑区不出现。
+  //   现在改为在 click 上自行判定双击，三条路径冗余（任一命中即可进入）：
+  //     ① 第二次点击落在 PIN_DOUBLE_CLICK_MS 窗口内（主力，不依赖浏览器双击计数）；
+  //     ② e.detail >= 2（浏览器点击计数，若环境仍提供）；
+  //     ③ 原生 dblclick（若环境仍派发）；
+  //   并用 PIN_TOGGLE_LATCH_MS 闩锁抑制多路径重复触发。
+  //   另加「长按图钉」（PIN_LONG_PRESS_MS）作为兜底入口，与机器人/重新生成按钮的长按约定一致。
+
+  // 取消图钉上所有挂起的计时器（单击判定 / 长按判定）
+  const cancelPinTimers = () => {
     if (pinTimerRef.current) {
-      // 第二次点击在 280ms 内：判定为双击，由 onPinDoubleClick 处理，这里取消单击
       clearTimeout(pinTimerRef.current);
       pinTimerRef.current = null;
+    }
+    if (pinPressTimerRef.current) {
+      clearTimeout(pinPressTimerRef.current);
+      pinPressTimerRef.current = null;
+    }
+  };
+
+  // 触发拼接模式切换：闩锁期内（同一次双击的其它路径）忽略
+  const firePinAppendToggle = () => {
+    const now = Date.now();
+    if (now - pinAppendFiredAtRef.current < PIN_TOGGLE_LATCH_MS) return;
+    pinAppendFiredAtRef.current = now;
+    pinLastClickAtRef.current = 0; // 双击序列结束：重置点击计时，避免三连击被当成第二次双击
+    toggleAppendMode();
+  };
+
+  const onPinMouseDown = () => {
+    cancelPinTimers();
+    pinLongFiredRef.current = false;
+    pinPressTimerRef.current = setTimeout(() => {
+      pinPressTimerRef.current = null;
+      pinLongFiredRef.current = true;
+      firePinAppendToggle();
+    }, PIN_LONG_PRESS_MS);
+  };
+
+  // 松手/移出按钮：取消长按计时（否则松手后仍会计时长按触发）
+  const onPinRelease = () => {
+    if (pinPressTimerRef.current) {
+      clearTimeout(pinPressTimerRef.current);
+      pinPressTimerRef.current = null;
+    }
+  };
+
+  const onPinMouseLeave = () => {
+    onPinRelease();
+    if (pinLongFiredRef.current) pinLongFiredRef.current = false;
+  };
+
+  const onPinClick = (e) => {
+    onPinRelease();
+    if (pinLongFiredRef.current) {
+      // 长按已切换拼接模式：这次 click 是长按松手产生的副作用，跳过单击/双击判定
+      pinLongFiredRef.current = false;
+      return;
+    }
+    const now = Date.now();
+    const detail = (e && typeof e.detail === "number") ? e.detail : 1;
+    const isDouble = detail >= 2 ||
+      (pinLastClickAtRef.current > 0 && now - pinLastClickAtRef.current <= PIN_DOUBLE_CLICK_MS);
+    pinLastClickAtRef.current = now;
+    // 双击：先撤销上一次点击挂起的「固定」动作，保证双击不会顺带改变固定状态
+    if (pinTimerRef.current) {
+      clearTimeout(pinTimerRef.current);
+      pinTimerRef.current = null;
+    }
+    if (isDouble) {
+      firePinAppendToggle();
       return;
     }
     pinTimerRef.current = setTimeout(() => {
       pinTimerRef.current = null;
       togglePin();
-    }, 280);
+    }, PIN_DOUBLE_CLICK_MS);
   };
 
+  // 原生 dblclick 兜底：环境若仍派发该事件，与 click 自判定共享闩锁，不会重复切换
   const onPinDoubleClick = (e) => {
     if (e && typeof e.preventDefault === "function") e.preventDefault();
     if (pinTimerRef.current) {
       clearTimeout(pinTimerRef.current);
       pinTimerRef.current = null;
     }
-    toggleAppendMode();
+    if (pinLongFiredRef.current) return;
+    firePinAppendToggle();
   };
 
 // 拼接编辑区输入：实时 setAppendText + requestAnimationFrame 同步调高度，
@@ -2282,10 +2386,13 @@ const onAppendChange = (e) => {
             <button
               className={"icon-btn pin-btn" + (pinned ? " active" : "")}
               title={appendMode
-                ? "拼接模式：继续划词追加，编辑后点「开始翻译」（双击退出拼接）"
+                ? "拼接模式：继续划词追加，编辑后点「开始翻译」（双击或长按图钉退出拼接）"
                 : (pinned
-                  ? "已固定：点击取消固定；双击进入拼接模式"
-                  : "固定卡片（点击）；双击进入拼接模式（跨页段落拼接翻译）")}
+                  ? "已固定：点击取消固定；双击或长按进入拼接模式"
+                  : "固定卡片（点击）；双击或长按进入拼接模式（跨页段落拼接翻译）")}
+              onMouseDown={onPinMouseDown}
+              onMouseUp={onPinRelease}
+              onMouseLeave={onPinMouseLeave}
               onClick={onPinClick}
               onDoubleClick={onPinDoubleClick}
             >

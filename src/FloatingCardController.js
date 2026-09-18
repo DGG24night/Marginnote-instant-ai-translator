@@ -275,7 +275,15 @@ var MNIATFloatingCard = (function () {
           throw new Error("Unknown bridge command: " + message.command);
         }
 
-        var context = { controller: self, addon: self.addon, kind: "card" };
+        // addon 实例双来源（2026-09-18）：控制器实例属性在某些 bridge 上下文里可能不可达，
+        // 此时用模块内注入的实例兜底——卡片命令（enterAppendMode / addCard）都依赖
+        // addon.window（或 controller.addonWindow）定位当前窗口，读不到会直接抛错，
+        // 表现为命令静默失败（前端 Promise 被 catch 吞掉，界面毫无反应）。
+        var ctxAddon = addonInstance;
+        try {
+          if (self.addon) ctxAddon = self.addon;
+        } catch (e) { /* 实例属性不可读：保留模块内注入的实例 */ }
+        var context = { controller: self, addon: ctxAddon, kind: "card" };
         var result = handler(context, message.payload);
 
         if (isPromiseLike(result)) {
@@ -390,14 +398,20 @@ var MNIATFloatingCard = (function () {
     // 注入插件实例：卡片 bridge 命令（如 addCard）需要 addon.window 定位当前窗口
     setAddon: function (addon) {
       addonInstance = addon;
+      // 已创建的控制器同步刷新：控制器可能在 setAddon 之前就建好了（上一笔记本会话），
+      // 只写模块变量会让 controller.addon 一直是旧值/空值，bridge 命令拿不到 window
+      if (controller) {
+        controller.addon = addon;
+      }
     },
 
     ensureController: function (win) {
       if (!controller) {
         controller = cardControllerClass.new();
-        controller.addonWindow = win;
-        controller.addon = addonInstance; // 与面板控制器一致：卡片 controller 也可访问插件实例
       }
+      // 每次调用都刷新（不只创建时写一次）：窗口可能换了，addon 也可能后于控制器注入
+      controller.addonWindow = win;
+      controller.addon = addonInstance; // 与面板控制器一致：卡片 controller 也可访问插件实例
       return controller;
     },
 

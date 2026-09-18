@@ -301,11 +301,20 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
   // ---------- 拼接模式（双击图钉：跨页段落手动拼接翻译） ----------
 
   // 双击图钉 → 进入拼接模式：取消当前翻译，以最近选区为拼接起点，固定卡片并切换到拼接界面
+  // 2026-09-18：window 解析失败不再抛错（此前抛「缺少窗口上下文，无法进入拼接模式」，
+  // 前端 catch 会把错误吞掉 → 双击图钉毫无反应）。窗口只是「定位当前文档」用，
+  // 拼接模式下每次划词都会用监听回调带回的窗口刷新会话，进入时缺失可由 lastWin 兜底。
   function enterAppendMode(context) {
-    var win = (context.controller && context.controller.addonWindow) ||
-      (context.addon && context.addon.window);
+    var win = null;
+    try {
+      win = (context && context.controller && context.controller.addonWindow) ||
+        (context && context.addon && context.addon.window) || null;
+    } catch (e) {
+      // 实例属性在 bridge 上下文里可能不可读（本身抛错）：吞掉，交给 lastWin 兜底
+      win = null;
+    }
     if (!win) {
-      throw new Error("缺少窗口上下文，无法进入拼接模式");
+      console.log("[MNIATBridge] enterAppendMode: window unavailable, fall back to lastWin");
     }
     return MNIATFlow.enterAppendMode(win);
   }
