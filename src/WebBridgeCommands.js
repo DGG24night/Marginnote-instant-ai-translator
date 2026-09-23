@@ -168,6 +168,38 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return { copied: true };
   }
 
+  // 原生 TTS（发音兜底）：卡片前端播放词典音频失败（或词典没有音频直链，如中文词语/成语）
+  // 时调用，用 MarginNote 自带的 SpeechManager 朗读（mn-docs → reference/utility/speech-manager）。
+  // 语言按内容自动判定（含 CJK → zh-CN，否则 en-US），也可由 payload.lang 显式指定。
+  function speakText(context, payload) {
+    var text = payload && payload.text ? String(payload.text).trim() : "";
+    if (!text) {
+      throw new Error("缺少朗读文本");
+    }
+    var lang = (payload && payload.lang) ||
+      (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text) ? "zh-CN" : "en-US");
+    var sm = null;
+    try {
+      sm = SpeechManager.sharedInstance();
+    } catch (e) {
+      sm = null;
+    }
+    if (!sm) {
+      throw new Error("系统发音不可用");
+    }
+    // 上一次朗读未结束时先停止，避免叠加播放
+    try {
+      if (sm.speaking) sm.stopSpeech();
+    } catch (e) { /* 忽略：部分版本无 speaking 属性 */ }
+    try {
+      sm.playText(text, lang);
+    } catch (e2) {
+      // 指定语言的签名不可用时退回单参数版本
+      sm.playText(text);
+    }
+    return { spoken: true, lang: lang };
+  }
+
   // 「添加卡片」（工具栏添加按钮 / AI 对话回答「添加笔记」）：
   // payload = { title, body, markdown, colorIndex } —— 前端按当前结果组装（查词=单词标题+音标释义正文，
   // AI 解释=单词标题+解释正文，翻译=原句标题+译文正文），Markdown 模式默认开启。
@@ -227,7 +259,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     return MNIATFlow.chatStop();
   }
 
-  // 工具栏搜索框查询任意单词：用默认查词服务提供商（config.lookupProvider）查词
+  // 工具栏搜索框查询任意单词：按内容语言用默认查词服务（含中文 → 查词-中文，否则查词-英文）
   function cardLookup(context, payload) {
     if (!payload || !payload.text) {
       throw new Error("缺少查询文本");
@@ -359,6 +391,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNInstantAITranslatorAddon = (function () {
     setCardPinned,
     cardLostFocus,
     copyText,
+    speakText,
     addCard,
     explainWithAI,
     robotRun,

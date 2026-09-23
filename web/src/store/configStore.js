@@ -147,6 +147,7 @@ const EMPTY_CONFIG = {
   enabled: true,
   lookupEnabled: true,
   translateEnabled: true,
+  lookupChinese: true, // 查询中文：关闭后选中内容含中文不触发查词/翻译（仅划词触发路径，工具栏搜索等显式操作不受影响）
   lookupCacheSize: 50,
   translateCacheSize: 50,
   targetLang: "zh-CN",
@@ -157,7 +158,8 @@ const EMPTY_CONFIG = {
   fontSize: "medium",
   pronounceAuto: true,
   pronounceAccent: "us",
-  lookupProvider: "youdao", // youdao | bing | haici | ai（查词服务提供商）
+  lookupProviderEn: "youdao", // 查词-英文：youdao | bing | haici | kingsoft | ai（AI 解释）
+  lookupProviderZh: "xinhua", // 查词-中文：xinhua | hanyuguoxue | youdao | bing | haici | kingsoft | ai-zh（AI 查词-中文）
   aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用于发音的词典：youdao | haici | bing
   streamMode: true, // 流式输出：AI 回复逐字实时显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
   typewriterEffect: true, // 打字机效果：流式期间按固定节拍逐字揭示，输出更顺滑（关闭 = 收到多少显示多少）
@@ -173,11 +175,12 @@ const EMPTY_CONFIG = {
   providers: [],
   routing: {
     translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
-    lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
+    lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI查词-英文（单击机器人图标）
+    lookupZh: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI查词-中文（单击机器人图标）：留空回落 AI查词-英文
     chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话：对话界面切换模型时写入（= 上次使用的模型），设置页不再配置
-    robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // 长难句解释（双击机器人图标）：留空回落 AI 解释路由
+    robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // 长难句解释（双击机器人图标）：留空回落 AI查词-英文 路由
   },
-  prompts: { translate: "", explain: "", robotDouble: "" },
+  prompts: { translate: "", explain: "", robotDouble: "", lookupZh: "" },
 };
 
 export const useConfigStore = create((set, get) => ({
@@ -252,7 +255,7 @@ export const useConfigStore = create((set, get) => ({
   removeProvider: async (providerId) => {
     await get().update((config) => {
       config.providers = config.providers.filter((p) => p.id !== providerId);
-      ["translate", "lookup", "chat", "robotDouble"].forEach((kind) => {
+      ["translate", "lookup", "lookupZh", "chat", "robotDouble"].forEach((kind) => {
         if (config.routing[kind].providerId === providerId) {
           config.routing[kind] = { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" };
         }

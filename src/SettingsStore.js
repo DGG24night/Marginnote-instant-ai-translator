@@ -16,6 +16,7 @@ var MNIATSettings = (function () {
       enabled: true,                // 插件总开关（false 时划词不触发）
       lookupEnabled: true,          // 查词功能独立开关（false 时选中单词不触发查词）
       translateEnabled: true,       // 翻译功能独立开关（false 时选中句子/段落不触发翻译）
+      lookupChinese: true,          // 查询中文：false 时选中内容含中文不触发查词/翻译（划词路径拦截；工具栏搜索等显式操作不受影响）
       lookupCacheSize: 50,          // 查词结果缓存条数（0 = 不使用缓存）
       translateCacheSize: 50,       // AI 翻译结果缓存条数（0 = 不使用缓存）
       targetLang: "zh-CN",
@@ -26,7 +27,9 @@ var MNIATSettings = (function () {
       fontSize: "medium",           // small | medium | large
       pronounceAuto: true,          // 查词后自动发音
       pronounceAccent: "us",        // uk | us
-      lookupProvider: "youdao",     // youdao | bing | haici | kingsoft | ai（查词服务提供商；ai = 直接用 AI 解释）
+      lookupProviderEn: "youdao",   // 查词-英文：youdao | bing | haici | kingsoft | ai（ai = 直接用 AI 解释）
+      lookupProviderZh: "xinhua",   // 查词-中文：xinhua（新华词典）| hanyuguoxue（汉语国学）| youdao | bing | haici | kingsoft | ai-zh（AI 查词-中文）
+                                    // 划词按选区是否含中文自动选用（见 TranslateFlow.lookupProviderFor）
       aiExplainPronounce: "youdao", // 查词服务=ai 时，AI 解释返回后用哪个词典发音：youdao | haici | bing | kingsoft
       streamMode: true,             // 流式输出：AI 回复走 delegate 真流式逐字显示；关闭则等待完整结果一次性显示（机器翻译打字机同步受控）
       typewriterEffect: true,       // 打字机效果：流式期间前端按固定节拍逐字揭示，输出更顺滑（关闭 = 收到多少显示多少）
@@ -54,14 +57,16 @@ var MNIATSettings = (function () {
       providers: [],                // [{id,name,baseURL,apiKey,models:[{id,supportsReasoning}]}]
       routing: {
         translate: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
-        lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },
+        lookup: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },     // AI查词-英文（单击机器人图标，英文内容）
+        lookupZh: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" },  // AI查词-中文（单击机器人图标，中文内容）
         chat: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" }, // AI 对话：对话界面切换模型时写入（= 上次使用的模型），设置页不再配置
-        robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" } // 长难句解释（双击机器人图标）：留空回落 AI 解释路由
+        robotDouble: { providerId: "", modelId: "", temperature: 0.3, reasoningEffort: "off" } // 长难句解释（双击机器人图标）：留空回落 AI查词-英文 路由
       },
       prompts: {
         translate: "",              // 空串 = 使用内置默认模板
-        explain: "",                // AI 解释（机器人图标单击同用此模板）
-        robotDouble: ""             // 机器人图标双击 prompt（空串 = 内置默认，长难句解释）
+        explain: "",                // AI查词-英文（单击机器人图标 + 非中文内容；查词-英文 选「AI查词-英文」时）
+        robotDouble: "",            // 机器人图标双击 prompt（空串 = 内置默认，长难句解释）
+        lookupZh: ""                // AI查词-中文（单击机器人图标 + 含中文内容；查词-中文 选「AI 查词-中文」时）
       }
     };
   }
@@ -94,7 +99,7 @@ var MNIATSettings = (function () {
       if (raw[key] !== undefined && raw[key] !== null) merged[key] = raw[key];
     }
 
-    ["translate", "lookup", "chat", "robotDouble"].forEach(function (k) {
+    ["translate", "lookup", "lookupZh", "chat", "robotDouble"].forEach(function (k) {
       var r = (raw.routing && raw.routing[k]) || {};
       merged.routing[k] = {
         providerId: typeof r.providerId === "string" ? r.providerId : "",
@@ -107,8 +112,31 @@ var MNIATSettings = (function () {
     merged.prompts = {
       translate: (raw.prompts && typeof raw.prompts.translate === "string") ? raw.prompts.translate : "",
       explain: (raw.prompts && typeof raw.prompts.explain === "string") ? raw.prompts.explain : "",
-      robotDouble: (raw.prompts && typeof raw.prompts.robotDouble === "string") ? raw.prompts.robotDouble : ""
+      robotDouble: (raw.prompts && typeof raw.prompts.robotDouble === "string") ? raw.prompts.robotDouble : "",
+      lookupZh: (raw.prompts && typeof raw.prompts.lookupZh === "string") ? raw.prompts.lookupZh : ""
     };
+
+    // 查词服务拆分（2026-09-19）：原单一 lookupProvider → 查词-英文 / 查词-中文 两项。
+    // 迁移规则（老配置无新字段时）：
+    //   英文 = 原值（若原值只支持中文——xinhua/hanyuguoxue/ai-zh——回退有道）
+    //   中文 = 原值（原值为 ai 时改为 ai-zh「AI 查词-中文」，语义对应；无原值默认新华词典）
+    var legacy = typeof raw.lookupProvider === "string" ? raw.lookupProvider : "";
+    var PROVIDERS_EN = { youdao: 1, bing: 1, haici: 1, kingsoft: 1, ai: 1 };
+    var PROVIDERS_ZH = { youdao: 1, bing: 1, haici: 1, kingsoft: 1, xinhua: 1, hanyuguoxue: 1, "ai-zh": 1 };
+
+    var en = typeof raw.lookupProviderEn === "string" ? raw.lookupProviderEn : "";
+    if (!PROVIDERS_EN[en]) en = PROVIDERS_EN[legacy] ? legacy : "youdao";
+    merged.lookupProviderEn = en;
+
+    var zh = typeof raw.lookupProviderZh === "string" ? raw.lookupProviderZh : "";
+    if (!PROVIDERS_ZH[zh]) {
+      if (legacy === "ai") zh = "ai-zh";
+      else if (PROVIDERS_ZH[legacy]) zh = legacy;
+      else zh = "xinhua";
+    }
+    merged.lookupProviderZh = zh;
+    // 旧字段 lookupProvider 已由上面两项承接，不再写入配置文件（读取仍兼容）
+    delete merged.lookupProvider;
 
     // 快捷键深兜底（老配置无该字段时给默认值；空串回落默认，避免快捷键失效）
     var sc = (raw.shortcuts && typeof raw.shortcuts === "object") ? raw.shortcuts : {};
@@ -121,6 +149,9 @@ var MNIATSettings = (function () {
 
     // 笔记附带结果开关深兜底（默认开启）
     merged.noteIncludeResult = raw.noteIncludeResult === false ? false : true;
+
+    // 查询中文开关深兜底（默认开启 = 保持原有行为：含中文的选区照常触发查词/翻译）
+    merged.lookupChinese = raw.lookupChinese === false ? false : true;
 
     // 打字机效果开关深兜底（老配置无该字段时默认开启）
     merged.typewriterEffect = raw.typewriterEffect === false ? false : true;

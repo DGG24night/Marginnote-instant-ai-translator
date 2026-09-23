@@ -871,6 +871,23 @@ body.drag-sorting {
   vertical-align: middle;
 }
 
+/* 已添加过的模型：名称弱化 + 「已添加」小标签（默认已勾选，避免重复添加） */
+.models-picker-list .checkbox.is-added .model-id {
+  color: var(--text-secondary);
+}
+
+.model-added-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--accent);
+  background: var(--bg-hover);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
 @media (max-width: 700px) {
   .models-picker-list .checkbox {
     flex: 0 0 100%;
@@ -915,6 +932,47 @@ body.drag-sorting {
   margin-bottom: 18px;
 }
 
+/* 同入口下有多项提示词时的分组（如「单击机器人图标」→ AI查词-英文 / AI查词-中文）：
+   父标题用较重的字号，子项标题降级为小字，靠缩进体现层级。 */
+.prompt-group,
+.route-group {
+  margin: 4px 0 18px;
+}
+
+.prompt-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 分组内的子项：与上一项之间不加分隔线（父标题下已有分隔线） */
+.prompt-editor-nested,
+.route-editor-nested {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.prompt-editor-nested {
+  padding-left: 10px;
+}
+
+.route-group .route-editor:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.prompt-sub-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0 0 8px;
+}
+
 .prompt-head {
   display: flex;
   align-items: center;
@@ -945,10 +1003,14 @@ html.card-fit .card-body {
   overflow-y: auto;
 }
 
-/* 查词结果：彻底隐藏滚动条（本 WebView 忽略 ::-webkit-scrollbar 隐藏样式，
-   故直接收起纵向滚动，保证不出现滚动条；卡片高度已随查词内容自适应） */
+/* 查词结果：卡片高度随内容自适应，但卡在 CARD_MAX_HEIGHT（500）——
+   中文词典内容（拼音 + 注音 + 多条义项 + 可展开的引证/例如/英文）经常超过该上限，
+   若在此处收起纵向滚动，超出部分将永远看不到（中文查词卡片无法下滑的根因）。
+   故与 AI 文本卡一致保留 overflow-y:auto：内容不超上限时不会出现滚动条，
+   超出时可在 .card-body 内滑动；滚动条由全局 ::-webkit-scrollbar(display:none)
+   + .mniat-scroll-visible（滚动中临时显示）控制，静止时不显示。 */
 .card-page.dict-mode .card-body {
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 
 .card-page {
@@ -2002,6 +2064,12 @@ html.card-fit .card-body {
   margin: 4px 0 8px;
 }
 
+/* 中文词典（新华词典）：拼音之后的注音（ㄩˋ），比拼音再弱一档 */
+.dict-phones .dict-zhuyin {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
 .dict-phones span {
   margin-right: 14px;
 }
@@ -2025,6 +2093,71 @@ html.card-fit .card-body {
   border-radius: 4px;
   padding: 1px 6px;
   margin-right: 8px;
+}
+
+/* 中文词典（汉语国学）：义项的补充内容（引证 / 例如 / 英文）
+   默认收起，只显示「引证 ▸」小标签，点击展开 */
+.dict-line {
+  display: block;
+}
+
+.dict-detail-wrap {
+  display: block;
+  margin-top: 3px;
+}
+
+.dict-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: none;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dict-detail-toggle:hover,
+.dict-detail-toggle.is-open {
+  color: var(--text);
+}
+
+.dict-detail-caret {
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.dict-details {
+  display: block;
+  margin: 4px 0 2px 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.dict-detail-row {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.dict-detail-label {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  font-size: 10px;
+  vertical-align: 1px;
+}
+
+/* 引证多条时以换行分隔（解析时保留 \n） */
+.dict-detail-text {
+  white-space: pre-line;
 }
 
 /* 词态变化（复数/过去式/现在分词等）：标签+值成对，自动换行 */

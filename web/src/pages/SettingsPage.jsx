@@ -535,7 +535,8 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     setBulkResults({});
   };
 
-  // 获取模型列表：插件侧 GET {baseURL}/models（OpenAI 兼容），再按需勾选添加
+  // 获取模型列表：插件侧 GET {baseURL}/models（OpenAI 兼容），再按需勾选添加。
+  // 该提供商下已添加过的模型默认打勾（用户可直接看到哪些已加，也可取消勾选）。
   const fetchModels = async () => {
     if (modelsFetching) return;
     setModelsFetching(true);
@@ -551,6 +552,14 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
       });
       if (result && result.models) {
         setModelsList(result.models);
+        const existing = new Set(
+          (provider.models || []).map((m) => String((m && m.id) || "")).filter(Boolean)
+        );
+        const pre = {};
+        result.models.forEach((m) => {
+          if (existing.has(String(m))) pre[m] = true;
+        });
+        setSelectedModels(pre);
         if (result.models.length === 0 && result.message) {
           setModelsError(result.message);
         }
@@ -589,6 +598,11 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
   };
 
   const selectedCount = modelsList.filter((m) => selectedModels[m]).length;
+
+  // 该提供商下已添加的模型 id（列表中标「已添加」，并默认打勾）
+  const existingModelIds = new Set(
+    (provider.models || []).map((m) => String((m && m.id) || "")).filter(Boolean)
+  );
 
   // 搜索过滤（不区分大小写）
   const filteredModels = modelQuery.trim()
@@ -817,7 +831,10 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                 )}
                 {!modelsFetching && !modelsError && modelsList.length > 0 && (
                   <>
-                    <p className="field-hint">勾选需要添加的模型，可多选：</p>
+                    <p className="field-hint">
+                      勾选需要添加的模型，可多选；已添加过的模型已默认勾选（标注「已添加」），
+                      重复添加不会产生重复条目。
+                    </p>
                     <input
                       className="input models-search"
                       placeholder="搜索模型名称，如 deepseek…"
@@ -833,13 +850,19 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                       <>
                         <div className="models-picker-list">
                           {filteredModels.map((m) => (
-                            <label className="checkbox" key={m}>
+                            <label
+                              className={"checkbox" + (existingModelIds.has(String(m)) ? " is-added" : "")}
+                              key={m}
+                            >
                               <input
                                 type="checkbox"
                                 checked={!!selectedModels[m]}
                                 onChange={() => toggleModel(m)}
                               />
                               <span className="model-id" title={m}>{m}</span>
+                              {existingModelIds.has(String(m)) && (
+                                <span className="model-added-tag">已添加</span>
+                              )}
                             </label>
                           ))}
                         </div>
@@ -1042,16 +1065,17 @@ function MachineProviderCard({ mp, idx, dragProps, listRef }) {
 
 // ---------- 路由配置 ----------
 
-// kind: "translate" | "lookup" | "robotDouble"（路由配置组；具名导出供渲染冒烟测试使用）
-export function RouteEditor({ kind, title, hint }) {
+// kind: "translate" | "lookup"（AI查词-英文）| "lookupZh"（AI查词-中文）| "robotDouble"
+//（路由配置组；具名导出供渲染冒烟测试使用）。nested = 位于分组标题下（如「单击机器人图标」）。
+export function RouteEditor({ kind, title, hint, nested }) {
   const { config, update } = useConfigStore();
   const route = config.routing[kind];
   const provider = config.providers.find((p) => p.id === route.providerId);
   const model = provider && provider.models.find((m) => m.id === route.modelId);
 
   return (
-    <div className="route-editor">
-      <h3 className="route-title">{title}</h3>
+    <div className={"route-editor" + (nested ? " route-editor-nested" : "")}>
+      <h3 className={nested ? "prompt-sub-title" : "route-title"}>{title}</h3>
       {hint && <p className="field-hint" style={{ marginTop: -4, marginBottom: 8 }}>{hint}</p>}
       <div className="route-grid">
         <Field label="提供商">
@@ -1132,7 +1156,7 @@ export function RouteEditor({ kind, title, hint }) {
 
 // ---------- Prompt 编辑 ----------
 
-function PromptEditor({ promptKey, title }) {
+function PromptEditor({ promptKey, title, nested }) {
   const { config, update } = useConfigStore();
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const value = config.prompts[promptKey];
@@ -1144,9 +1168,9 @@ function PromptEditor({ promptKey, title }) {
   }, [promptKey]);
 
   return (
-    <div className="prompt-editor">
+    <div className={"prompt-editor" + (nested ? " prompt-editor-nested" : "")}>
       <div className="prompt-head">
-        <h3 className="route-title">{title}</h3>
+        <h3 className={nested ? "prompt-sub-title" : "route-title"}>{title}</h3>
         <button
           className="btn btn-sm"
           onClick={() => update((config) => { config.prompts[promptKey] = ""; })}
@@ -1166,6 +1190,17 @@ function PromptEditor({ promptKey, title }) {
           update((config) => { config.prompts[promptKey] = e.target.value; })
         }
       />
+    </div>
+  );
+}
+
+// 设置项分组：同一入口下的多项提示词（如「单击机器人图标」→ AI查词-英文 / AI查词-中文）。
+// 仅负责标题层级，不改变各 PromptEditor 自身行为。
+function PromptGroup({ title, children }) {
+  return (
+    <div className="prompt-group">
+      <h3 className="prompt-group-title">{title}</h3>
+      {children}
     </div>
   );
 }
@@ -1640,19 +1675,38 @@ function SettingsPage() {
             <h3 className="subsection-title">查词</h3>
             <div className="route-grid">
               <Field
-                label="查词服务提供商"
-                hint="划词查询单个单词时使用的词典；选择「AI 解释」则直接调用 AI（使用模型路由中「AI 解释」的提供商与模型）。"
+                label="查词-英文"
+                hint="选中内容为英文（不含中文）时使用的查词服务；选择「AI查词-英文」则直接调用 AI（使用模型路由中「单击机器人图标 → AI查词-英文」的提供商与模型，提示词在 Prompt 模板页配置）。"
               >
                 <select
                   className="input"
-                  value={config.lookupProvider || "youdao"}
-                  onChange={(e) => update((c) => { c.lookupProvider = e.target.value; })}
+                  value={config.lookupProviderEn || "youdao"}
+                  onChange={(e) => update((c) => { c.lookupProviderEn = e.target.value; })}
                 >
                   <option value="youdao">有道词典</option>
                   <option value="bing">必应词典</option>
                   <option value="haici">海词词典</option>
                   <option value="kingsoft">金山词霸</option>
-                  <option value="ai">AI 解释</option>
+                  <option value="ai">AI查词-英文</option>
+                </select>
+              </Field>
+
+              <Field
+                label="查词-中文"
+                hint="选中内容含中文时使用的查词服务：「新华词典」「汉语国学」为中文词典，可查汉字 / 词语 / 成语（带拼音、注音与读音；汉语国学的引证 / 例如 / 英文默认折叠，点击展开）；选择「AI查词-中文」则调用 AI（使用模型路由中「单击机器人图标 → AI查词-中文」的提供商与模型）。划词时按内容语言自动选用中/英服务。"
+              >
+                <select
+                  className="input"
+                  value={config.lookupProviderZh || "xinhua"}
+                  onChange={(e) => update((c) => { c.lookupProviderZh = e.target.value; })}
+                >
+                  <option value="xinhua">新华词典</option>
+                  <option value="hanyuguoxue">汉语国学</option>
+                  <option value="youdao">有道词典</option>
+                  <option value="bing">必应词典</option>
+                  <option value="haici">海词词典</option>
+                  <option value="kingsoft">金山词霸</option>
+                  <option value="ai-zh">AI查词-中文</option>
                 </select>
               </Field>
 
@@ -1668,15 +1722,13 @@ function SettingsPage() {
               </Field>
 
               <Field
-                label="AI 解释发音"
-                hint={config.lookupProvider === "ai"
-                  ? "查词服务为 AI 解释时生效：AI 返回结果后自动朗读该单词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。"
-                  : "需将「查词服务提供商」选为「AI 解释」后生效。"}
+                label="AI 查词发音"
+                hint="「查词-英文」选「AI查词-英文」或「查词-中文」选「AI查词-中文」时生效：AI 返回结果后自动朗读该词，跟随「查词自动发音」开关，发音口音遵循「发音口音」设置。中文单字优先使用新华词典 / 汉语国学的读音录音，中文词语与成语改用 MarginNote 原生发音。"
               >
                 <select
                   className="input"
                   value={config.aiExplainPronounce || "youdao"}
-                  disabled={config.lookupProvider !== "ai"}
+                  disabled={config.lookupProviderEn !== "ai" && config.lookupProviderZh !== "ai-zh"}
                   onChange={(e) => update((c) => { c.aiExplainPronounce = e.target.value; })}
                 >
                   <option value="youdao">有道词典</option>
@@ -1713,6 +1765,17 @@ function SettingsPage() {
                   onChange={(e) => update((c) => { c.pronounceAuto = e.target.checked; })}
                 />
                 查词后自动发音
+              </label>
+              <label
+                className="checkbox"
+                title="开启（默认）：选中含中文的内容照常触发查词/翻译；关闭：选中内容里只要有中文就不触发（适合纯英文阅读场景，避免误选中文时弹卡片）。仅作用于划词触发；工具栏搜索框查询、拼接模式「开始翻译」等显式操作不受影响。"
+              >
+                <input
+                  type="checkbox"
+                  checked={config.lookupChinese !== false}
+                  onChange={(e) => update((c) => { c.lookupChinese = e.target.checked; })}
+                />
+                查询中文
               </label>
             </div>
 
@@ -1921,7 +1984,16 @@ function SettingsPage() {
         {activeTab === "routing" && (
           <Section title="模型路由">
             <RouteEditor kind="translate" title="翻译（句子/段落）" />
-            <RouteEditor kind="lookup" title="单击机器人图标（AI解释）" />
+            <div className="route-group">
+              <h3 className="prompt-group-title">单击机器人图标</h3>
+              <RouteEditor kind="lookup" title="AI查词-英文" nested />
+              <RouteEditor
+                kind="lookupZh"
+                title="AI查词-中文"
+                nested
+                hint="未设置时使用「AI查词-英文」的配置。"
+              />
+            </div>
             <RouteEditor
               kind="robotDouble"
               title="双击机器人图标"
@@ -2091,7 +2163,10 @@ function SettingsPage() {
               <code>{"{context}"}</code> 选区上下文（仅查词时注入，长度在「常规」设置中配置，0 时不注入）。
             </p>
             <PromptEditor promptKey="translate" title="翻译" />
-            <PromptEditor promptKey="explain" title="单击机器人图标（AI解释）" />
+            <PromptGroup title="单击机器人图标">
+              <PromptEditor promptKey="explain" title="AI查词-英文" nested />
+              <PromptEditor promptKey="lookupZh" title="AI查词-中文" nested />
+            </PromptGroup>
             <PromptEditor promptKey="robotDouble" title="双击机器人图标" />
           </Section>
         )}

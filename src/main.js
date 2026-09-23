@@ -20,6 +20,9 @@ JSB.require("YoudaoService");
 JSB.require("BingDictionaryService");
 JSB.require("HaiCiDictionaryService");
 JSB.require("KingsoftDictionaryService");
+JSB.require("XinhuaStrokes");            // 新华字典字页「总笔画」离线表（由 scripts/build-xinhua-strokes.js 生成）
+JSB.require("XinhuaDictionaryService"); // 新华词典（汉字/词语/成语），依赖上方的笔画表
+JSB.require("HanyuGuoxueService");      // 汉语国学（汉字/词语/成语，含引证/例如/英文折叠内容）
 JSB.require("FloatingCardController");
 JSB.require("TranslateFlow");
 JSB.require("SelectionMonitor");

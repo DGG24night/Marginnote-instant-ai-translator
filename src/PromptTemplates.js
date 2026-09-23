@@ -60,6 +60,27 @@ var MNIATPrompts = (function () {
     "用一两句话点出本句最容易误解之处（如歧义修饰对象、省略成分、易混词形、虚拟/倒装带来的含义变化）\n\n" +
     "你需要讲解的句子是：{text}";
 
+  // AI 查词-中文 prompt：查词-中文 选「AI 查词-中文」时使用。
+  // 目标是「像词典条目一样」输出，而不是像 AI 解释那样长篇分析：
+  // 拼音/注音 → 词性分组的义项（逐条编号）→ 可选的例词/例句。
+  // 复用 {text}/{context} 变量；{target_lang} 未使用但保留渲染兼容。
+  var DEFAULT_LOOKUP_ZH =
+    "你是一名中文词典编纂者。请严格按以下markdown格式，为{text}给出规范的词典式释义：\n\n" +
+    "# {text}\n" +
+    "**拼音**\n" +
+    "给出汉语拼音（带声调；多音字按读音分行列出）。\n" +
+    "---\n" +
+    "**释义**\n" +
+    "按词性分组（如〈名〉〈动〉〈形〉〈副〉），每个词性下的义项用数字序号 1. 2. 3. 逐条列出，" +
+    "释义后用「：」接常见搭配或例词（如“相逢，会面：～见。～事。”）。\n" +
+    "若是词语或成语，先给整体释义，再说明关键字义与用法。\n" +
+    "---\n" +
+    "**例句**\n" +
+    "给出 1-2 个能体现该词用法的例句（古文引用请注明出处）。\n\n" +
+    "**只输出词典内容本身**，不要写“根据查询”“以下是”之类的开场白；" +
+    "若{text}不存在或不是规范的中文词条，直接说明「未收录该词条」并给出最接近的规范说法。\n\n" +
+    "该词所在的上下文（可能为空）：{context}";
+
   function render(template, vars) {
     var out = String(template);
     for (var key in vars) {
@@ -72,10 +93,11 @@ var MNIATPrompts = (function () {
     defaults: {
       translate: DEFAULT_TRANSLATE,
       explain: DEFAULT_EXPLAIN,
-      robotDouble: DEFAULT_ROBOT_DOUBLE
+      robotDouble: DEFAULT_ROBOT_DOUBLE,
+      lookupZh: DEFAULT_LOOKUP_ZH
     },
 
-    // kind: "translate" | "explain" | "robotDouble"
+    // kind: "translate" | "explain" | "robotDouble" | "lookupZh"
     // context: 选区上下文（前后文）字符串，仅查词任务传入；未提供或为空时 {context}
     //          渲染为空串，并移除悬空的「上下文如下：」尾行（见 EMPTY_CONTEXT_SUFFIX）
     build: function (kind, text, context) {
@@ -83,7 +105,8 @@ var MNIATPrompts = (function () {
       var custom = config.prompts && config.prompts[kind];
       var fallbacks = {
         explain: DEFAULT_EXPLAIN,
-        robotDouble: DEFAULT_ROBOT_DOUBLE
+        robotDouble: DEFAULT_ROBOT_DOUBLE,
+        lookupZh: DEFAULT_LOOKUP_ZH
       };
       var template = (custom && custom.trim().length > 0)
         ? custom

@@ -54,6 +54,92 @@ var MNIATFlow = (function () {
     return cjkChars + asciiWords;
   }
 
+  // 选区是否含中文（CJK 表意文字：基本区/扩展 A/兼容区，以及扩展 B 及以上的代理对）。
+  function hasChinese(text) {
+    var s = String(text || "");
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if ((c >= 0x3400 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff)) return true;
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+        var lo = s.charCodeAt(i + 1);
+        if (lo >= 0xdc00 && lo <= 0xdfff) {
+          var cp = ((c - 0xd800) << 10) + (lo - 0xdc00) + 0x10000;
+          if (cp >= 0x20000 && cp <= 0x3134f) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 「查询中文」开关（config.lookupChinese）判定：
+  //   关闭（false）时，含中文的选区不触发查词/翻译，直接跳过。
+  //   仅作用于「划词触发」路径（canHandle / handleSelection）：工具栏搜索框查询、
+  //   拼接模式「开始翻译」等用户显式发起的操作不受影响。
+  //   默认 true：老配置没有该字段时保持原有行为（含中文照常触发）。
+  function blockedByChineseSetting(text) {
+    if (MNIATSettings.load().lookupChinese !== false) return false;
+    return hasChinese(text);
+  }
+
+  // 单个 CJK 字符（含扩展 A/B 代理对）——用于中文发音：单字走站点拼音录音，
+  // 多字（词语/成语）交给 MarginNote 原生 TTS。
+  function isSingleCJKChar(text) {
+    var s = String(text == null ? "" : text).trim();
+    if (s.length === 1) {
+      var c = s.charCodeAt(0);
+      return (c >= 0x3400 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff);
+    }
+    if (s.length === 2) {
+      var hi = s.charCodeAt(0);
+      var lo = s.charCodeAt(1);
+      if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) {
+        var cp = ((hi - 0xd800) << 10) + (lo - 0xdc00) + 0x10000;
+        return cp >= 0x20000 && cp <= 0x3134f;
+      }
+    }
+    return false;
+  }
+
+  // 查词服务按语言分流（2026-09-19）：设置页拆成「查词-英文」「查词-中文」两项，
+  // 划词/搜索时按内容是否含中文自动选用对应服务。
+  // 中文服务里的 "ai-zh" = AI 查词-中文（走 AI + prompts.lookupZh 模板）。
+  function lookupProviderFor(text) {
+    var cfg = MNIATSettings.load();
+    if (hasChinese(text)) {
+      var zh = cfg.lookupProviderZh || "xinhua";
+      if (zh === "xinhua" || zh === "hanyuguoxue" || zh === "youdao" || zh === "bing" ||
+        zh === "haici" || zh === "kingsoft" || zh === "ai-zh") {
+        return zh;
+      }
+      return "xinhua";
+    }
+    var en = cfg.lookupProviderEn || "youdao";
+    if (en === "youdao" || en === "bing" || en === "haici" || en === "kingsoft" || en === "ai") {
+      return en;
+    }
+    return "youdao";
+  }
+
+  // AI 查词-中文的路由组名（模型路由页「单击机器人图标 → AI查词-中文」）。
+  // 用户未配置该路由（providerId 为空）时回落「AI 查词-英文」（routing.lookup），
+  // 避免 provider 为空导致请求直接失败。
+  function aiZhRoutingKind() {
+    var r = MNIATSettings.load().routing.lookupZh;
+    return (r && r.providerId) ? "lookupZh" : "lookup";
+  }
+
+  // AI 查词-中文：走「AI查词-中文」路由（未配置时回落 AI查词-英文），
+  // 并使用 prompts.lookupZh 模板，结果按 AI 文本卡展示。
+  // job.aiZh 标记本次任务来自「AI 查词-中文」；job.aiLookupKind 供自动发音与
+  // 「失败后是否用 excerptText 重试」门控。
+  function runAIChineseLookup(job) {
+    job.mode = "explain"; // 复用 AI 文本卡状态机（流式输出 / 重新生成 / 添加卡片）
+    job.aiZh = true;
+    job.aiLookupKind = "ai-zh";
+    pushEvent({ type: "loading", mode: "explain", text: job.text, provider: "ai-zh" });
+    runAI(job, aiZhRoutingKind(), "lookupZh", {});
+  }
+
   // 判定查词 / 翻译：
   //   - 纯英文单词（isSingleWord）始终按查词；
   //   - 其余按单词数：countWords(text) > config.translateWordCount（默认 3）按翻译，否则查词。
@@ -466,14 +552,16 @@ var MNIATFlow = (function () {
 
     var cacheKind = null;
     var cacheKey = "";
-    var cacheable = promptKind === "explain" || promptKind === "translate";
+    var cacheable = promptKind === "explain" || promptKind === "translate" || promptKind === "lookupZh";
     if (provider && route.modelId && cacheable) {
       // 缓存键纳入上下文摘要：prompt 含 {context} 时，同一文本不同上下文结果不同，
       // 不区分会导致缓存互串（cXXX 段；上下文为空时不加段，兼容旧缓存仍可命中）
       var ck = contextKey(job.context);
-      if (promptKind === "explain") {
+      if (promptKind === "explain" || promptKind === "lookupZh") {
+        // AI 解释 / AI 查词-中文 共用查词缓存，但前缀区分（互不串用；历史标签也不同）
         cacheKind = "lookup";
-        cacheKey = "ai:" + provider.id + ":" + route.modelId + (ck ? ":" + ck : "") +
+        cacheKey = (promptKind === "lookupZh" ? "ai-zh:" : "ai:") +
+          provider.id + ":" + route.modelId + (ck ? ":" + ck : "") +
           ":" + String(job.text).trim().toLowerCase();
       } else {
         cacheKind = "translate";
@@ -516,7 +604,7 @@ var MNIATFlow = (function () {
             MNIATCache.put(cacheKind, cacheKey, {
               text: full,
               meta: {
-                kind: promptKind === "explain" ? "ai" : "translate",
+                kind: promptKind === "translate" ? "translate" : (promptKind === "lookupZh" ? "ai-zh" : "ai"),
                 provider: provider.id,
                 sourceText: String(job.text).trim()
               }
@@ -535,11 +623,10 @@ var MNIATFlow = (function () {
         // 仅一次重试（_fallbackTried 标志）防止无限循环。
         //
         // ⚠️ 限定（2026-08-15）：仅当「查词服务是真实词典」时启用 fallback。
-        // 当 lookupProvider="ai" 时，excerptText 本身就是 AI 解释输出，
-        // 拿它再跑 AI 解释无意义（重复请求、消耗 API、且 prompt 含中英混合长文本易报错）。
+        // 当查词服务为 AI 类（AI 解释 / AI 查词-中文）时，excerptText 本身就是 AI 输出，
+        // 拿它再跑 AI 无意义（重复请求、消耗 API、且 prompt 含中英混合长文本易报错）。
         if (job.fallbackText && job.fallbackText !== job.text && !job._fallbackTried) {
-          var fbCfg = MNIATSettings.load();
-          if (fbCfg.lookupProvider === "ai") {
+          if (job.aiLookupKind) {
             // 跳过 fallback：直接报错
             pushEvent({ type: "error", message: message });
             return;
@@ -567,8 +654,12 @@ var MNIATFlow = (function () {
     var cfg = MNIATSettings.load();
     var uk = "";
     var us = "";
-    if (provider === "bing" || provider === "haici" || provider === "kingsoft") {
-      // 必应/海词/金山：解析结果自带英美发音链接
+    if (provider === "bing" || provider === "haici" || provider === "kingsoft" ||
+      provider === "xinhua" || provider === "hanyuguoxue") {
+      // 必应/海词/金山/新华/汉语国学：解析结果自带发音链接
+      // （新华汉字读音 = 站点拼音录音；汉语国学汉字 = data.hanyuguoxue.com 录音；
+      //   中文词语/成语站点无直链 → 两者都为空串，前端自动回退 MarginNote 原生 TTS；
+      //   ukMp3 与 usMp3 相同，前端只展示一个发音按钮）
       uk = result.ukMp3 || "";
       us = result.usMp3 || "";
     } else {
@@ -782,6 +873,12 @@ var MNIATFlow = (function () {
       lookupPromise = MNIATHaiCi.lookup(queryWord);
     } else if (provider === "kingsoft") {
       lookupPromise = MNIATKingsoft.lookup(queryWord);
+    } else if (provider === "xinhua") {
+      // 新华词典：汉字 / 词语 / 成语（站点为中文词典，英文词会直接返回明确错误）
+      lookupPromise = MNIATXinhua.lookup(queryWord);
+    } else if (provider === "hanyuguoxue") {
+      // 汉语国学：汉字 / 词语 / 成语（含引证/例如/英文等折叠补充内容）
+      lookupPromise = MNIATHanyuGuoxue.lookup(queryWord);
     } else {
       lookupPromise = MNIATYoudao.lookup(queryWord);
     }
@@ -808,7 +905,33 @@ var MNIATFlow = (function () {
   // 返回 { url, fallbacks }：url 为首选，fallbacks 为备选列表（依次尝试）。
   // 有道特例：dictvoice 对首字母大写词可能返回 500（如 Desolvation），小写正常，
   // 故回退链包含「小写词」与「另一口音」。
+  //
+  // 中文（2026-09-19）：英文词典对中文词普遍无音频（有道 dictvoice 直接 500），
+  // 改为走中文词典的字读音录音——新华词典 / 汉语国学 的字页都有拼音录音；
+  // 中文词语/成语两侧均无直链，返回空 url，由卡片侧回退 MarginNote 原生 TTS。
   function resolvePronounceURL(word, preferredAccent) {
+    var text = String(word == null ? "" : word).trim();
+    if (hasChinese(text)) {
+      // 中文词语/成语（多字）：两个中文站点都没有整词音频直链，
+      // 返回空 url → 卡片侧直接走 MarginNote 原生 TTS（SpeechManager）
+      if (!isSingleCJKChar(text)) {
+        return Promise.resolve({ url: "", fallbacks: [] });
+      }
+      // 中文单字：优先新华词典字页拼音录音，其次汉语国学录音（站点都挂了才交给原生 TTS）
+      return MNIATXinhua.lookup(text).then(function (r) {
+        if (r && r.ukMp3) return { url: r.ukMp3, fallbacks: [] };
+        return MNIATHanyuGuoxue.pronounceFor(text).then(function (g) {
+          return { url: (g && g.url) || "", fallbacks: [] };
+        });
+      }).catch(function () {
+        return MNIATHanyuGuoxue.pronounceFor(text).then(function (g) {
+          return { url: (g && g.url) || "", fallbacks: [] };
+        }).catch(function () {
+          return { url: "", fallbacks: [] };
+        });
+      });
+    }
+
     var config = MNIATSettings.load();
     var source = config.aiExplainPronounce || "youdao";
     var accent = preferredAccent === "uk" ? "uk" : "us";
@@ -839,23 +962,31 @@ var MNIATFlow = (function () {
     });
   }
 
-  // AI 解释（lookupProvider=ai）返回后自动发音：
-  // 按「AI 解释发音」配置选择有道/海词/必应，口音遵循「发音口音」（uk/us），
-  // 并遵循「查词自动发音」开关（用户要求发音跟随该开关）；
-  // 仅当默认查词服务为 AI 解释（config.lookupProvider === "ai"）时生效——
-  // 词典卡/工具栏手动切换的 AI 解释（lookupProvider 为词典）不触发自动发音。
+  // AI 解释 / AI 查词-中文 返回后自动发音：
+  // 按「AI 解释发音」配置选择有道/海词/必应（中文词改走中文词典录音或原生 TTS），
+  // 口音遵循「发音口音」（uk/us），并遵循「查词自动发音」开关（用户要求发音跟随该开关）；
+  // 仅当本次任务由 AI 类查词服务产生（job.aiLookupKind）时生效——
+  // 词典卡/工具栏手动切换的 AI 结果不触发自动发音。
   function speakAIExplainWord(job, promptKind) {
-    if (promptKind !== "explain" || !job || job.mode !== "explain") return;
+    if (!job || !job.aiLookupKind) return;
+    if (job.aiLookupKind === "ai" && promptKind !== "explain") return;
+    if (job.aiLookupKind === "ai-zh" && promptKind !== "lookupZh") return;
     var config = MNIATSettings.load();
-    if (config.lookupProvider !== "ai") return;
+    // 兜底：默认查词服务已不再是该 AI 项时（用户改了设置）不再自动发音
+    var expected = job.aiLookupKind === "ai-zh" ? config.lookupProviderZh : config.lookupProviderEn;
+    if (expected !== job.aiLookupKind) return;
     if (!config.pronounceAuto) return;
     var word = String(job.text || "").trim();
     if (!word) return;
     var accent = config.pronounceAccent === "uk" ? "uk" : "us";
     resolvePronounceURL(word, accent).then(function (r) {
-      if (r && r.url) {
-        pushEvent({ type: "speak", url: r.url, fallbacks: r.fallbacks || [], accent: accent });
-      }
+      pushEvent({
+        type: "speak",
+        url: (r && r.url) || "",
+        fallbacks: (r && r.fallbacks) || [],
+        accent: accent,
+        text: word
+      });
     });
   }
 
@@ -886,6 +1017,11 @@ var MNIATFlow = (function () {
       var item = { key: e.key };
       if (cacheKind === "translate") {
         item.type = "translate";
+        item.sourceText = meta.sourceText || fallbackWordFromKey(e.key);
+        item.text = v.text || "";
+        if (!item.text) continue;
+      } else if (meta.kind === "ai-zh" || (!meta.kind && String(e.key).indexOf("ai-zh:") === 0)) {
+        item.type = "ai-zh"; // AI 查词-中文（前端历史标签同 AI 类）
         item.sourceText = meta.sourceText || fallbackWordFromKey(e.key);
         item.text = v.text || "";
         if (!item.text) continue;
@@ -929,15 +1065,27 @@ var MNIATFlow = (function () {
     } else if (item.type === "ai") {
       var w = String(item.sourceText || "").trim();
       currentJob = { mode: "explain", text: w, win: win, session: null, context: "" };
-      pushEvent({ type: "loading", mode: "explain", text: w });
+      currentJob.aiLookupKind = "ai";
+      pushEvent({ type: "loading", mode: "explain", text: w, provider: "ai" });
       pushEvent({ type: "translateResult", text: String(item.text || "") });
       speakAIExplainWord(currentJob, "explain");
+    } else if (item.type === "ai-zh") {
+      var wz = String(item.sourceText || "").trim();
+      currentJob = { mode: "explain", text: wz, win: win, session: null, context: "" };
+      currentJob.aiZh = true;
+      currentJob.aiLookupKind = "ai-zh";
+      pushEvent({ type: "loading", mode: "explain", text: wz, provider: "ai-zh" });
+      pushEvent({ type: "translateResult", text: String(item.text || "") });
+      speakAIExplainWord(currentJob, "lookupZh");
     } else if (item.type === "dict" && item.data) {
       var word = String(item.sourceText || "").trim();
-      var provider = item.provider === "bing" || item.provider === "haici" || item.provider === "kingsoft"
+      var provider = item.provider === "bing" || item.provider === "haici" ||
+        item.provider === "kingsoft" || item.provider === "xinhua" ||
+        item.provider === "hanyuguoxue"
         ? item.provider
         : "youdao";
       currentJob = { mode: "lookup", text: word, win: win, session: null, context: "" };
+      currentJob.aiLookupKind = "";
       pushEvent({ type: "loading", mode: "lookup", text: word });
       finishLookup(currentJob, provider, item.data);
     } else {
@@ -947,8 +1095,9 @@ var MNIATFlow = (function () {
   }
 
   return {
-    // 判定该文本是否应被处理（查词/翻译独立开关）
+    // 判定该文本是否应被处理（查词/翻译独立开关 + 查询中文开关）
     canHandle: function (text) {
+      if (blockedByChineseSetting(text)) return false;
       var mode = determineMode(text);
       var config = MNIATSettings.load();
       if (mode === "lookup" && config.lookupEnabled === false) return false;
@@ -969,6 +1118,12 @@ var MNIATFlow = (function () {
         appendSession.win = win;
         console.log("[MNIATFlow] append mode: +" + t.slice(0, 40));
         pushEvent({ type: "appendText", text: t });
+        return;
+      }
+      // 「查询中文」关闭：含中文的选区直接跳过（不取消当前结果，用户看不到任何变化）
+      if (blockedByChineseSetting(text)) {
+        console.log("[MNIATFlow] selection contains Chinese, lookup disabled by setting: \"" +
+          String(text).slice(0, 40) + "\"");
         return;
       }
       this.cancelCurrent();
@@ -1020,13 +1175,19 @@ var MNIATFlow = (function () {
 
     startJob: function (job) {
       if (job.mode === "lookup") {
-        var config = MNIATSettings.load();
-        var lookupProvider = config.lookupProvider || "youdao"; // youdao | bing | haici | ai
+        // 查词服务按语言分流：含中文 → 「查词-中文」，否则 → 「查词-英文」
+        var lookupProvider = lookupProviderFor(job.text);
 
-        // 查词服务配置为「AI 解释」时，直接走 AI（使用 lookup 路由 + explain prompt）
+        // 「AI 查词-中文」：直接走 AI（lookup 路由 + lookupZh prompt）
+        if (lookupProvider === "ai-zh") {
+          runAIChineseLookup(job);
+          return;
+        }
+        // 「查词-英文 = AI 解释」：走 AI（lookup 路由 + explain prompt）
         if (lookupProvider === "ai") {
           job.mode = "explain"; // 标记为 AI 解释任务（触发返回后自动发音；词典卡手动切换不触发）
-          pushEvent({ type: "loading", mode: "explain", text: job.text });
+          job.aiLookupKind = "ai";
+          pushEvent({ type: "loading", mode: "explain", text: job.text, provider: "ai" });
           runAI(job, "lookup", "explain", {});
           return;
         }
@@ -1054,14 +1215,17 @@ var MNIATFlow = (function () {
         currentJob.session = null;
       }
       // 标记为 AI 解释任务：前端显示「重新生成」按钮并支持长按选模型；
-      // 自动发音仍受 speakAIExplainWord 的 config.lookupProvider === "ai" 门控，不受影响
+      // 自动发音仍受 speakAIExplainWord 的门控，不受影响
       currentJob.mode = "explain";
-      pushEvent({ type: "loading", mode: "explain", text: currentJob.text });
+      currentJob.aiZh = false;
+      currentJob.aiLookupKind = "ai";
+      pushEvent({ type: "loading", mode: "explain", text: currentJob.text, provider: "ai" });
       runAI(currentJob, "lookup", "explain", {});
       return { switched: true };
     },
 
-    // 工具栏搜索框查询任意单词：使用默认查词服务提供商（config.lookupProvider）。
+    // 工具栏搜索框查询任意单词：按内容语言选默认查词服务
+    // （含中文 → 「查词-中文」，否则 → 「查词-英文」；见 lookupProviderFor）。
     // bypassCache=true（2026-08-12）：搜索跳过缓存读取，避免大小写版本命中已有错误缓存
     // （如曾划词查 "Hard" 拿到姓氏结果，再搜索 "hard" 会被同 cacheKey 命中）；
     // 写入不受影响，新结果覆盖旧缓存值，搜索词由此进入查词历史。
@@ -1078,13 +1242,14 @@ var MNIATFlow = (function () {
     },
 
     // 工具栏查词服务切换（bar 图标菜单）：临时切换查词服务/AI 解释对比结果，
-    // 不写回 config.lookupProvider（默认查词服务仍在设置页更改）。
+    // 不写回设置里的「查词-英文 / 查词-中文」（默认服务仍在设置页更改）。
     lookupWithProvider: function (provider) {
       if (!currentJob) {
         throw new Error("当前没有进行中的任务");
       }
       var valid = provider === "youdao" || provider === "bing" || provider === "haici" ||
-        provider === "kingsoft" || provider === "ai";
+        provider === "kingsoft" || provider === "xinhua" || provider === "hanyuguoxue" ||
+        provider === "ai" || provider === "ai-zh";
       if (!valid) throw new Error("不支持的查词服务: " + provider);
       if (currentJob.session) {
         currentJob.session.cancel();
@@ -1092,10 +1257,16 @@ var MNIATFlow = (function () {
       }
       if (provider === "ai") {
         currentJob.mode = "explain";
-        pushEvent({ type: "loading", mode: "explain", text: currentJob.text });
+        currentJob.aiZh = false;
+        currentJob.aiLookupKind = "ai";
+        pushEvent({ type: "loading", mode: "explain", text: currentJob.text, provider: "ai" });
         runAI(currentJob, "lookup", "explain", {});
+      } else if (provider === "ai-zh") {
+        runAIChineseLookup(currentJob);
       } else {
         currentJob.mode = "lookup";
+        currentJob.aiZh = false;
+        currentJob.aiLookupKind = "";
         runLookup(currentJob, provider);
       }
       return { switched: true };
@@ -1103,8 +1274,12 @@ var MNIATFlow = (function () {
 
     // 机器人图标：单击 / 双击触发对应自定义 prompt（设置「Prompt 模板」中可改）。
     // 文本 = 当前任务文本；结果走 delta/translateResult 通道由前端打字机渲染。
-    // promptKey: "explain"（单击 = AI 解释模板，可缓存，路由 = AI 解释）
-    //          | "robotDouble"（双击 = 长难句解释：路由优先「长难句解释」，未配置回落 AI 解释，不读写缓存）
+    // 单击（promptKey="explain"）：按选中内容语言分流（2026-09-20）——
+    //   含中文 → prompts.lookupZh +「AI查词-中文」路由（= AI 查词-中文 的结果）；
+    //   纯英文 → prompts.explain +「AI查词-英文」路由。
+    //   settings 里的 prompt/路由 key 仍叫 explain / lookup（老配置不必迁移），
+    //   只是设置页把两者显示为「AI查词-英文 / AI查词-中文」并归到「单击机器人图标」下。
+    // 双击（promptKey="robotDouble"）：长难句解释，路由优先「长难句解释」，未配置回落 AI查词-英文，不读写缓存。
     robotPrompt: function (promptKey) {
       if (promptKey !== "explain" && promptKey !== "robotDouble") {
         throw new Error("不支持的机器人 prompt: " + promptKey);
@@ -1118,14 +1293,29 @@ var MNIATFlow = (function () {
       }
       // 标记为 explain 模式：前端显示「重新生成」按钮、发音按钮等按 AI 解释处理
       currentJob.mode = "explain";
-      pushEvent({ type: "loading", mode: "explain", text: currentJob.text });
+      // 机器人图标入口与「查词服务是否为 AI 类」无关：清掉查词任务遗留的标记，
+      // 使自动发音/失败重试策略与所选 prompt 一致（与改动前行为相同）。
+      currentJob.aiLookupKind = "";
+      currentJob.aiZh = false;
+      var effectivePrompt = promptKey;
       var routingKind = "lookup";
       if (promptKey === "robotDouble") {
         var rd = MNIATSettings.load().routing.robotDouble;
         routingKind = (rd && rd.providerId) ? "robotDouble" : "lookup";
+      } else if (hasChinese(currentJob.text)) {
+        // 选中内容含中文 → 用「AI查词-中文」的 prompt 与路由
+        effectivePrompt = "lookupZh";
+        routingKind = aiZhRoutingKind();
+        currentJob.aiZh = true;
       }
-      // 单击（explain）允许读写缓存；双击（robotDouble）跳过缓存
-      runAI(currentJob, routingKind, promptKey, promptKey === "explain" ? {} : { bypassCache: true });
+      pushEvent({
+        type: "loading",
+        mode: "explain",
+        text: currentJob.text,
+        provider: effectivePrompt === "lookupZh" ? "ai-zh" : "ai"
+      });
+      // 单击（explain / lookupZh）允许读写缓存；双击（robotDouble）跳过缓存
+      runAI(currentJob, routingKind, effectivePrompt, promptKey === "explain" ? {} : { bypassCache: true });
       return { started: true };
     },
 
@@ -1219,7 +1409,17 @@ var MNIATFlow = (function () {
       var promptKind = currentJob.promptKind ||
         (currentJob.mode === "explain" ? "explain" : "translate");
       pushEvent({ type: "reset" });
-      pushEvent({ type: "loading", mode: currentJob.mode, text: currentJob.text });
+      // 携带 AI 类查词标记（ai / ai-zh）：前端切换菜单据此高亮当前服务。
+      // 机器人图标入口不写 aiLookupKind（与查词服务无关），故按本次实际使用的 prompt 兜底判断
+      // （promptKind=lookupZh 即「AI查词-中文」，避免中文结果重新生成后菜单错高亮成英文项）。
+      var markKind = currentJob.aiLookupKind ||
+        (currentJob.promptKind === "lookupZh" ? "ai-zh" : "");
+      pushEvent({
+        type: "loading",
+        mode: currentJob.mode,
+        text: currentJob.text,
+        provider: markKind || null
+      });
 
       // 拆分两类覆盖：机器翻译（machineProviderId）与 AI（providerId+modelId），避免串用
       var machineOverride = (override && override.machineProviderId)

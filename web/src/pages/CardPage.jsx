@@ -43,7 +43,7 @@ const initialState = {
   accumulated: "",
   dict: null,
   errorMsg: "",
-  lookupProvider: null, // 当前查词服务（切换菜单高亮用）：youdao | bing | haici | ai | null
+  lookupProvider: null, // 当前查词服务（切换菜单高亮用）：youdao | bing | haici | kingsoft | xinhua | hanyuguoxue | ai | ai-zh | null
 };
 
 // 思考过程折叠块（reasoning_content 流式展示；正文开始后由调用方自动折叠）：
@@ -366,6 +366,8 @@ function CardPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [appendMode, setAppendMode] = useState(false); // 拼接模式（双击图钉）：划词追加原文，编辑后翻译
   const [appendText, setAppendText] = useState(""); // 拼接编辑区内容（前端为真源，用户可编辑）
+  // 中文词典（汉语国学）折叠内容：义项序号 → 是否展开（引证/例如/英文，默认全部收起）
+  const [dictOpen, setDictOpen] = useState({});
   const [noteOpen, setNoteOpen] = useState(false); // 笔记编辑界面（N 键 / 双击「添加」按钮进入）
   const [noteTitle, setNoteTitle] = useState(""); // 笔记标题（默认为单词/原句，可编辑）
   const [noteText, setNoteText] = useState(""); // 笔记编辑区内容（可含自动附带的查词/翻译结果）
@@ -451,12 +453,35 @@ function CardPage() {
   // 失败条件：加载错误（网络/解码，如有道 500 JSON 错误体）、音频残缺（时长 <0.7s，如损坏的美音文件）、
   // play() 非 NotAllowedError 失败。全部失败则提示不可用。
   // 典型回退链：原词首字母大写（dictvoice 可能 500，如 Desolvation）→ 小写词 → 另一口音。
+  // 原生发音兜底：网站音频抓取/播放失败（或词典本就没有音频直链，如中文词语/成语）时，
+  // 经 bridge 调用 MarginNote 的 SpeechManager 朗读文本。
+  const speakNative = useCallback(
+    async (text) => {
+      const t = String(text || "").trim();
+      if (!t) return false;
+      try {
+        await MNBridge.send("speakText", { text: t });
+        showHint("已改用 MarginNote 系统发音");
+        return true;
+      } catch (error) {
+        showHint(`「${t.length > 8 ? t.slice(0, 8) + "…" : t}」发音不可用：${(error && error.message) || "系统发音失败"}`);
+        return false;
+      }
+    },
+    [showHint]
+  );
+
   const playWithFallback = useCallback(
-    (url, fallbacks, label) => {
+    (url, fallbacks, label, spokenText) => {
       const list = [url, ...(fallbacks || [])].filter(Boolean);
       const tryIndex = (i) => {
         if (i >= list.length) {
-          showHint(`「${label}」发音暂不可用`);
+          // 所有音频地址都失败（或压根没有）→ 回退 MarginNote 原生发音
+          if (spokenText) {
+            speakNative(spokenText);
+          } else {
+            showHint(`「${label}」发音暂不可用`);
+          }
           return;
         }
         const u = list[i];
@@ -498,10 +523,11 @@ function CardPage() {
       };
       tryIndex(0);
     },
-    [showHint]
+    [showHint, speakNative]
   );
 
-  // AI 解释结果的手动发音：经 bridge 让插件按「AI 解释发音」配置解析发音 URL 再播放
+  // AI 解释 / AI 查词-中文 结果的手动发音：经 bridge 让插件按「AI 解释发音」配置
+  // 解析发音 URL 再播放（中文单字走中文词典录音，中文词语交原生 TTS）
   const playPronounce = useCallback(
     async (accent) => {
       if (speaking || !state.sourceText) return;
@@ -512,9 +538,15 @@ function CardPage() {
           accent,
         });
         if (r && r.url) {
-          playWithFallback(r.url, r.fallbacks || [], accent === "uk" ? "英音" : "美音");
+          playWithFallback(
+            r.url,
+            r.fallbacks || [],
+            accent === "uk" ? "英音" : "美音",
+            state.sourceText
+          );
         } else {
-          showHint("该单词发音暂不可用");
+          // 无音频直链（如中文词语/成语）→ 直接走系统发音
+          speakNative(state.sourceText);
         }
       } catch (error) {
         showHint("发音获取失败，请稍后重试");
@@ -522,7 +554,7 @@ function CardPage() {
         setSpeaking(null);
       }
     },
-    [speaking, state.sourceText, playWithFallback, showHint]
+    [speaking, state.sourceText, playWithFallback, showHint, speakNative]
   );
 
   // ---------- 重新生成（点击 / 长按选模型） ----------
@@ -833,8 +865,9 @@ function CardPage() {
               status: "loading",
               mode: event.mode,
               sourceText: event.text,
-              // explain = AI 解释（查词服务菜单高亮「AI 解释」）
-              lookupProvider: event.mode === "explain" ? "ai" : null,
+              // explain = AI 文本卡：AI 解释（event.provider="ai"）或 AI 查词-中文（"ai-zh"），
+              // 切换菜单据此高亮当前服务
+              lookupProvider: event.mode === "explain" ? (event.provider || "ai") : null,
             };
           case "delta":
             return { ...prev, status: "streaming", accumulated: event.accumulated };
@@ -869,6 +902,12 @@ function CardPage() {
       // 拼接模式独立状态（不参与结果区状态机）：
       //   appendMode 事件（双击图钉）→ 切换到拼接编辑界面，固定卡片；
       //   appendText 事件（划词追加）→ 智能连接进编辑区（可编辑修正）。
+      if (event.type === "dictResult") {
+        setDictOpen({}); // 新词典结果：折叠内容全部收起
+      }
+      if (event.type === "reset" || event.type === "appendMode") {
+        setDictOpen({});
+      }
       if (event.type === "appendMode") {
         setAppendMode(true);
         setAppendText(event.text || "");
@@ -878,29 +917,42 @@ function CardPage() {
         setAppendText((prevText) => smartJoin(prevText, event.text || ""));
       }
 
-      // 词典结果到达后自动发音（首选口音不可用时依次回退：小写词 → 另一口音）
+      // 词典结果到达后自动发音（首选口音不可用时依次回退：小写词 → 另一口音 →
+      // 全部失败或没有音频直链时回退 MarginNote 原生发音）
       if (event.type === "dictResult" && event.data && event.data.pronounce) {
         const p = event.data.pronounce;
+        const w = event.data.word || "";
         if (p.auto) {
+          // 中文词典（新华词典 / 汉语国学）只有一条读音（拼音），不分英/美口音
+          if (event.data.phoneticLabel) {
+            const url = p.uk || p.us;
+            playWithFallback(url, [p.us, p.uk].filter(Boolean), event.data.phoneticLabel + "读音", w);
+            return;
+          }
           const preferred = p.accent === "uk" ? p.uk : p.us;
           const lowerSame = p.accent === "uk" ? (p.ukFallback || "") : (p.usFallback || "");
           const other = p.accent === "uk" ? p.us : p.uk;
           playWithFallback(
             preferred,
             [lowerSame, other].filter(Boolean),
-            p.accent === "uk" ? "英音" : "美音"
+            p.accent === "uk" ? "英音" : "美音",
+            w
           );
         }
       }
 
-      // 外部指定发音（AI 解释返回后朗读单词）——放在 setState 之外确保立即执行
+      // 外部指定发音（AI 解释 / AI 查词-中文 返回后朗读单词）——放在 setState 之外确保立即执行
       if (event.type === "speak") {
         if (event.url) {
           playWithFallback(
             event.url,
             event.fallbacks || [],
-            event.accent === "uk" ? "英音" : "美音"
+            event.accent === "uk" ? "英音" : "美音",
+            event.text || ""
           );
+        } else if (event.text) {
+          // 词典无音频直链（如中文词语/成语）：直接走系统发音
+          speakNative(event.text);
         } else {
           showHint("该单词发音暂不可用");
         }
@@ -970,7 +1022,7 @@ function CardPage() {
         robotTouchCleanupRef.current = null;
       }
     };
-  }, [load, playWithFallback, showHint]);
+  }, [load, playWithFallback, showHint, speakNative]);
 
   // 内容变化后测量实际高度，经 bridge 通知插件调整卡片 WebView 高度。
   // 测量 .card-measure（隐藏测量器）/ .dict-result 的自然高度 + toolbar 高度，
@@ -1135,7 +1187,7 @@ function CardPage() {
       if (doMeasureRef.current) doMeasureRef.current();
     }, 50);
     return () => clearTimeout(timer);
-  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, chatEffortOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending, reasonDraft, reasonOpen, chatReasonDraft, chatReasonOpen]);
+  }, [state, config.theme, config.fontSize, pronounceHint, searchOpen, switchOpen, modelPickerOpen, chatPickerOpen, chatEffortOpen, historyOpen, historyLoading, historyItems, isStreaming, appendMode, appendText, noteOpen, noteText, chatOpen, chatDraft, chatMessages, chatSending, reasonDraft, reasonOpen, chatReasonDraft, chatReasonOpen, dictOpen]);
 
 // 拼接模式：textarea 高度 auto-grow（基于 scrollHeight），到 CSS max-height 上限内部滚动。
   //   - onChange 触发的内容增长：见 onAppendChange，用 rAF 同步设 height；
@@ -1169,19 +1221,32 @@ function CardPage() {
     if (includeWord && d.word) {
       lines.push(d.word);
     }
+    // 中文词典（新华词典）用「拼音 + 注音」，英文词典用「英/美音标」
+    const phoneLabel = d.phoneticLabel || "";
     if (d.ukphone || d.usphone) {
-      lines.push("**音标**");
-      if (d.ukphone) lines.push(`英 /${d.ukphone}/`);
-      if (d.usphone) lines.push(`美 /${d.usphone}/`);
+      if (phoneLabel) {
+        lines.push(`**${phoneLabel}**`);
+        lines.push((d.ukphone || d.usphone) + (d.zhuyin ? `（${d.zhuyin}）` : ""));
+      } else {
+        lines.push("**音标**");
+        if (d.ukphone) lines.push(`英 /${d.ukphone}/`);
+        if (d.usphone) lines.push(`美 /${d.usphone}/`);
+      }
     }
-    // 同一词性的释义合并成一行（用「；」分隔），不同词性分多行 —— 与有道展示一致
+    // 同一词性的释义合并成一行（用「；」分隔），不同词性分多行 —— 与有道展示一致。
+    // perLine（中文词典）：义项逐条列出，不做合并（每条自带序号/读音标签），
+    // 并保留 details（引证/例如/英文）作为缩进补充行。
     const groups = [];
     (d.translations || []).forEach((t) => {
       const pos = t.pos || "";
+      if (d.perLine) {
+        groups.push({ pos, meanings: [t.meaning], details: t.details || [] });
+        return;
+      }
       if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
         groups[groups.length - 1].meanings.push(t.meaning);
       } else {
-        groups.push({ pos, meanings: [t.meaning] });
+        groups.push({ pos, meanings: [t.meaning], details: t.details || [] });
       }
     });
     if (groups.length > 0) {
@@ -1196,6 +1261,11 @@ function CardPage() {
       lines.push("**释义**");
       groups.forEach((g) => {
         lines.push(`${g.pos ? g.pos + " " : ""}${g.meanings.join("；")}`);
+        // 折叠内容（引证/例如/英文）在卡片正文里以缩进补充行保留（Markdown 无折叠能力）
+        (g.details || []).forEach((det) => {
+          if (!det || !det.text) return;
+          lines.push(`　【${det.label}】${String(det.text).replace(/\n/g, " ")}`);
+        });
       });
     }
     // 词态变化（复数/过去式/现在分词等）：各查词服务按需返回，无则不输出
@@ -2042,12 +2112,16 @@ function CardPage() {
     bing: { label: "BY", bg: "rgb(85, 166, 242)" },
     haici: { label: "HC", bg: "rgb(85, 211, 242)" },
     kingsoft: { label: "JS", bg: "rgb(112, 181, 120)" },
+    xinhua: { label: "XH", bg: "rgb(224, 118, 68)" },
+    hanyuguoxue: { label: "HG", bg: "rgb(196, 154, 66)" },
     ai: { label: "AI", bg: "rgb(229, 173, 255)" },
+    "ai-zh": { label: "AI", bg: "rgb(229, 173, 255)" },
   };
 
-  // 查词历史条目的标签：AI 解释（type=ai）→ AI 标签；词典 → 按服务商标签，未知回落有道
+  // 查词历史条目的标签：AI 类（AI 解释 / AI 查词-中文）→ AI 标签；
+  // 词典 → 按服务商标签，未知回落有道
   const lookupTag = (item) => {
-    if (item.type === "ai") return LOOKUP_TAG.ai;
+    if (item.type === "ai" || item.type === "ai-zh") return LOOKUP_TAG.ai;
     return LOOKUP_TAG[item.provider] || LOOKUP_TAG.youdao;
   };
 
@@ -2235,19 +2309,31 @@ const onAppendChange = (e) => {
   // 对话界面时工具栏左侧文字切换为「AI问答」（历史按钮提示随之变化）
   const modeLabel = chatPanelVisible
     ? "AI问答"
-    : (state.mode === "lookup" ? "查词" : state.mode === "explain" ? "AI 解释" : "翻译");
+    : (state.mode === "lookup"
+      ? "查词"
+      : state.mode === "explain"
+        ? (state.lookupProvider === "ai-zh" ? "AI查词-中文" : "AI查词-英文")
+        : "翻译");
 
-  // AI 类结果（翻译 / AI 解释）显示「重新生成」按钮
+  // AI 类结果（翻译 / AI 查词）显示「重新生成」按钮
   const isAIMode = state.mode === "explain" || state.mode === "translate";
   const canRegenerate = isAIMode && ["done", "streaming", "error"].includes(state.status);
 
-  // 查词服务切换菜单选项
+  // 中文词典（新华词典）结果：音标位置展示「拼音 + 注音」，英/美两个发音按钮合并为一个
+  const dictPhoneticLabel = (state.dict && state.dict.phoneticLabel) || "";
+
+  // 查词服务切换菜单选项（AI 类两项对应设置页「查词-英文」/「查词-中文」的 AI 选项）。
+  // 菜单里 AI 两项用缩写 AI-EN / AI-ZH（条目多、菜单窄，缩写更好扫读）；
+  // 设置页下拉与历史标签仍用完整名称「AI查词-英文 / AI查词-中文」。
   const LOOKUP_OPTIONS = [
     { value: "youdao", label: "有道词典" },
     { value: "bing", label: "必应词典" },
     { value: "haici", label: "海词词典" },
     { value: "kingsoft", label: "金山词霸" },
-    { value: "ai", label: "AI 解释" },
+    { value: "xinhua", label: "新华词典" },
+    { value: "hanyuguoxue", label: "汉语国学" },
+    { value: "ai", label: "AI-EN" },
+    { value: "ai-zh", label: "AI-ZH" },
   ];
 
   return (
@@ -2674,53 +2760,131 @@ const onAppendChange = (e) => {
           <div className="dict-result" ref={dictRef}>
             <div className="dict-head">
               <span className="dict-word">{state.dict.word}</span>
-              <button
-                className="icon-btn speak-btn"
-                title="英音"
-                onClick={() => {
-                  const d = state.dict.pronounce;
-                  playWithFallback(d.uk, [d.ukFallback || "", d.us].filter(Boolean), "英音");
-                }}
-              >
-                <SpeakerIcon />
-                <span className="speak-label">英</span>
-              </button>
-              <button
-                className="icon-btn speak-btn"
-                title="美音"
-                onClick={() => {
-                  const d = state.dict.pronounce;
-                  playWithFallback(d.us, [d.usFallback || "", d.uk].filter(Boolean), "美音");
-                }}
-              >
-                <SpeakerIcon />
-                <span className="speak-label">美</span>
-              </button>
+              {dictPhoneticLabel ? (
+                <button
+                  className="icon-btn speak-btn"
+                  title={`${dictPhoneticLabel}读音（音频不可用时自动使用 MarginNote 系统发音）`}
+                  onClick={() => {
+                    const d = state.dict.pronounce || {};
+                    playWithFallback(
+                      d.uk || d.us,
+                      [d.usFallback || "", d.ukFallback || "", d.uk, d.us].filter(Boolean),
+                      dictPhoneticLabel,
+                      state.dict.word
+                    );
+                  }}
+                >
+                  <SpeakerIcon />
+                  <span className="speak-label">读</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="icon-btn speak-btn"
+                    title="英音（音频不可用时自动使用 MarginNote 系统发音）"
+                    onClick={() => {
+                      const d = state.dict.pronounce;
+                      playWithFallback(
+                        d.uk,
+                        [d.ukFallback || "", d.us].filter(Boolean),
+                        "英音",
+                        state.dict.word
+                      );
+                    }}
+                  >
+                    <SpeakerIcon />
+                    <span className="speak-label">英</span>
+                  </button>
+                  <button
+                    className="icon-btn speak-btn"
+                    title="美音（音频不可用时自动使用 MarginNote 系统发音）"
+                    onClick={() => {
+                      const d = state.dict.pronounce;
+                      playWithFallback(
+                        d.us,
+                        [d.usFallback || "", d.uk].filter(Boolean),
+                        "美音",
+                        state.dict.word
+                      );
+                    }}
+                  >
+                    <SpeakerIcon />
+                    <span className="speak-label">美</span>
+                  </button>
+                </>
+              )}
             </div>
             {(state.dict.ukphone || state.dict.usphone) && (
               <div className="dict-phones">
-                {state.dict.ukphone && <span>英 /{state.dict.ukphone}/</span>}
-                {state.dict.usphone && <span>美 /{state.dict.usphone}/</span>}
+                {dictPhoneticLabel ? (
+                  <>
+                    <span>
+                      {dictPhoneticLabel} {state.dict.ukphone || state.dict.usphone}
+                    </span>
+                    {state.dict.zhuyin && (
+                      <span className="dict-zhuyin">{state.dict.zhuyin}</span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {state.dict.ukphone && <span>英 /{state.dict.ukphone}/</span>}
+                    {state.dict.usphone && <span>美 /{state.dict.usphone}/</span>}
+                  </>
+                )}
               </div>
             )}
             <ul className="dict-trans">
-              {/* 同一词性的多个释义合并成一行，用「；」分隔（与有道展示一致）；不同词性仍分多行 */}
+              {/* 同一词性的多个释义合并成一行，用「；」分隔（与有道展示一致）；不同词性仍分多行。
+                  perLine（中文词典）时义项逐条独占一行，pos 作为「读音/词性」小标签展示；
+                  details（引证/例如/英文）默认折叠，点击标签展开。 */}
               {(() => {
                 const groups = [];
-                state.dict.translations.forEach((t) => {
+                (state.dict.translations || []).forEach((t) => {
                   const pos = t.pos || "";
+                  if (state.dict.perLine) {
+                    groups.push({ pos, meanings: [t.meaning], details: t.details || [] });
+                    return;
+                  }
                   if (groups.length > 0 && groups[groups.length - 1].pos === pos) {
                     groups[groups.length - 1].meanings.push(t.meaning);
                   } else {
-                    groups.push({ pos, meanings: [t.meaning] });
+                    groups.push({ pos, meanings: [t.meaning], details: t.details || [] });
                   }
                 });
-                return groups.map((g, i) => (
-                  <li key={i}>
-                    {g.pos && <span className="dict-pos">{g.pos}</span>}
-                    {g.meanings.join("；")}
-                  </li>
-                ));
+                return groups.map((g, i) => {
+                  const details = g.details || [];
+                  const open = !!dictOpen[i];
+                  return (
+                    <li key={i}>
+                      <span className="dict-line">
+                        {g.pos && <span className="dict-pos">{g.pos}</span>}
+                        {g.meanings.join("；")}
+                      </span>
+                      {details.length > 0 && (
+                        <span className="dict-detail-wrap">
+                          <button
+                            className={"dict-detail-toggle" + (open ? " is-open" : "")}
+                            title={open ? "收起补充内容" : "展开补充内容"}
+                            onClick={() => setDictOpen((prev) => ({ ...prev, [i]: !prev[i] }))}
+                          >
+                            {details.map((d) => d.label).join(" / ")}
+                            <span className="dict-detail-caret">{open ? "▾" : "▸"}</span>
+                          </button>
+                          {open && (
+                            <span className="dict-details">
+                              {details.map((d, j) => (
+                                <span className="dict-detail-row" key={j}>
+                                  <span className="dict-detail-label">{d.label}</span>
+                                  <span className="dict-detail-text">{d.text}</span>
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </li>
+                  );
+                });
               })()}
             </ul>
             {/* 词态变化（复数/过去式/现在分词等）：各查词服务按需返回，无则不渲染 */}
