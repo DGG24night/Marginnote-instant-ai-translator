@@ -16,6 +16,7 @@ var MNIATSettings = (function () {
       enabled: true,                // 插件总开关（false 时划词不触发）
       lookupEnabled: true,          // 查词功能独立开关（false 时选中单词不触发查词）
       translateEnabled: true,       // 翻译功能独立开关（false 时选中句子/段落不触发翻译）
+      lookupChinese: true,          // 查询中文：false 时选中内容含中文不触发查词/翻译（划词路径拦截；工具栏搜索等显式操作不受影响）
       lookupCacheSize: 50,          // 查词结果缓存条数（0 = 不使用缓存）
       translateCacheSize: 50,       // AI 翻译结果缓存条数（0 = 不使用缓存）
       targetLang: "zh-CN",
@@ -121,6 +122,9 @@ var MNIATSettings = (function () {
 
     // 笔记附带结果开关深兜底（默认开启）
     merged.noteIncludeResult = raw.noteIncludeResult === false ? false : true;
+
+    // 查询中文开关深兜底（默认开启 = 保持原有行为：含中文的选区照常触发查词/翻译）
+    merged.lookupChinese = raw.lookupChinese === false ? false : true;
 
     // 打字机效果开关深兜底（老配置无该字段时默认开启）
     merged.typewriterEffect = raw.typewriterEffect === false ? false : true;

@@ -54,6 +54,33 @@ var MNIATFlow = (function () {
     return cjkChars + asciiWords;
   }
 
+  // 选区是否含中文（CJK 表意文字：基本区/扩展 A/兼容区，以及扩展 B 及以上的代理对）。
+  function hasChinese(text) {
+    var s = String(text || "");
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if ((c >= 0x3400 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff)) return true;
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+        var lo = s.charCodeAt(i + 1);
+        if (lo >= 0xdc00 && lo <= 0xdfff) {
+          var cp = ((c - 0xd800) << 10) + (lo - 0xdc00) + 0x10000;
+          if (cp >= 0x20000 && cp <= 0x3134f) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 「查询中文」开关（config.lookupChinese）判定：
+  //   关闭（false）时，含中文的选区不触发查词/翻译，直接跳过。
+  //   仅作用于「划词触发」路径（canHandle / handleSelection）：工具栏搜索框查询、
+  //   拼接模式「开始翻译」等用户显式发起的操作不受影响。
+  //   默认 true：老配置没有该字段时保持原有行为（含中文照常触发）。
+  function blockedByChineseSetting(text) {
+    if (MNIATSettings.load().lookupChinese !== false) return false;
+    return hasChinese(text);
+  }
+
   // 判定查词 / 翻译：
   //   - 纯英文单词（isSingleWord）始终按查词；
   //   - 其余按单词数：countWords(text) > config.translateWordCount（默认 3）按翻译，否则查词。
@@ -947,8 +974,9 @@ var MNIATFlow = (function () {
   }
 
   return {
-    // 判定该文本是否应被处理（查词/翻译独立开关）
+    // 判定该文本是否应被处理（查词/翻译独立开关 + 查询中文开关）
     canHandle: function (text) {
+      if (blockedByChineseSetting(text)) return false;
       var mode = determineMode(text);
       var config = MNIATSettings.load();
       if (mode === "lookup" && config.lookupEnabled === false) return false;
@@ -969,6 +997,12 @@ var MNIATFlow = (function () {
         appendSession.win = win;
         console.log("[MNIATFlow] append mode: +" + t.slice(0, 40));
         pushEvent({ type: "appendText", text: t });
+        return;
+      }
+      // 「查询中文」关闭：含中文的选区直接跳过（不取消当前结果，用户看不到任何变化）
+      if (blockedByChineseSetting(text)) {
+        console.log("[MNIATFlow] selection contains Chinese, lookup disabled by setting: \"" +
+          String(text).slice(0, 40) + "\"");
         return;
       }
       this.cancelCurrent();

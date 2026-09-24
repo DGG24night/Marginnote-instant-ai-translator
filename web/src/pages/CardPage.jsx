@@ -1671,6 +1671,9 @@ function CardPage() {
 
   // 机器人长按阈值（同「重新生成」400ms，早于系统长按手势）
   const ROBOT_LONG_PRESS_MS = 400;
+  // 单击/双击判定窗口：鼠标 280ms；触摸（iPad 手指）双击间隔通常略长，放宽到 320ms
+  const ROBOT_TAP_MS = 280;
+  const ROBOT_TOUCH_TAP_MS = 320;
   const clearRobotTimers = () => {
     if (robotTimerRef.current) {
       clearTimeout(robotTimerRef.current);
@@ -1720,7 +1723,7 @@ function CardPage() {
       return; // 长按已进入 AI 对话，点击不触发 prompt
     }
     if (robotTimerRef.current) {
-      // 280ms 内第二次点击：判定为双击，由 onRobotDoubleClick 处理
+      // 判定窗口内第二次点击：判定为双击，由 onRobotDoubleClick 处理
       clearTimeout(robotTimerRef.current);
       robotTimerRef.current = null;
       return;
@@ -1728,7 +1731,7 @@ function CardPage() {
     robotTimerRef.current = setTimeout(() => {
       robotTimerRef.current = null;
       runRobotPrompt("explain"); // 单击 = AI 解释 prompt（与设置「AI 解释 Prompt」同一模板）
-    }, 280);
+    }, ROBOT_TAP_MS);
   };
 
   const onRobotDoubleClick = (e) => {
@@ -1745,8 +1748,11 @@ function CardPage() {
     runRobotPrompt("robotDouble");
   };
 
-  // 触摸路径（iPad / Apple Pencil）：长按 → AI 对话；轻点 → 单击 prompt
-  // （触摸后的合成 mouse 事件 500ms 内一律忽略，避免双触发；触摸双击暂不支持）
+  // 触摸路径（iPad / Apple Pencil）：长按 → AI 对话；轻点 → 单击 prompt；连续两次轻点 → 双击 prompt。
+  // 触摸后的合成 mouse 事件 500ms 内一律忽略，避免双触发。
+  // ⚠️ 2026-09-23：此前轻点在 touchend 立即触发单击 prompt，导致 iPad 上没有双击判定
+  // （第一次轻点就打出单击 prompt，长难句解释永远触发不了）。现与鼠标路径一致：
+  // 轻点先起 ROBOT_TOUCH_TAP_MS 判定计时器，窗口内第二次轻点 → robotDouble，超时才走 explain。
   const bindRobotTouch = useCallback((el) => {
     if (robotTouchCleanupRef.current) {
       robotTouchCleanupRef.current();
@@ -1801,9 +1807,18 @@ function CardPage() {
         robotLongFiredRef.current = false;
         return; // 长按已进入 AI 对话
       }
-      if (wasActive) {
-        runRobotPrompt("explain"); // 轻点 = 单击（AI 解释 prompt）
+      if (!wasActive) return;
+      // 上一次轻点的判定计时器仍在 → 本次为窗口内的第二次轻点 = 双击（长难句解释）
+      if (robotTimerRef.current) {
+        clearTimeout(robotTimerRef.current);
+        robotTimerRef.current = null;
+        runRobotPrompt("robotDouble");
+        return;
       }
+      robotTimerRef.current = setTimeout(() => {
+        robotTimerRef.current = null;
+        runRobotPrompt("explain"); // 轻点 = 单击（AI 解释 prompt）
+      }, ROBOT_TOUCH_TAP_MS);
     };
 
     const onTouchCancel = () => {

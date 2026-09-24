@@ -1714,6 +1714,17 @@ function SettingsPage() {
                 />
                 查词后自动发音
               </label>
+              <label
+                className="checkbox"
+                title="开启（默认）：选中含中文的内容照常触发查词/翻译；关闭：选中内容里只要有中文就不触发（适合纯英文阅读场景，避免误选中文时弹卡片）。仅作用于划词触发；工具栏搜索框查询、拼接模式「开始翻译」等显式操作不受影响。"
+              >
+                <input
+                  type="checkbox"
+                  checked={config.lookupChinese !== false}
+                  onChange={(e) => update((c) => { c.lookupChinese = e.target.checked; })}
+                />
+                查询中文
+              </label>
             </div>
 
             {/* ===== 翻译 ===== */}

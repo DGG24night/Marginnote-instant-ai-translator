@@ -147,6 +147,7 @@ const EMPTY_CONFIG = {
   enabled: true,
   lookupEnabled: true,
   translateEnabled: true,
+  lookupChinese: true, // 查询中文：关闭后选中内容含中文不触发查词/翻译（仅划词触发路径，工具栏搜索等显式操作不受影响）
   lookupCacheSize: 50,
   translateCacheSize: 50,
   targetLang: "zh-CN",
