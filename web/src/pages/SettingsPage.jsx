@@ -551,6 +551,14 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
       });
       if (result && result.models) {
         setModelsList(result.models);
+        // 已添加的模型自动打勾：勾选态一开始就反映当前已添加情况
+        // （重复点「添加选中」无害，addSelectedModels 内部按已有模型去重）
+        const existing = new Set(provider.models.map((m) => String(m.id)));
+        const preselected = {};
+        result.models.forEach((id) => {
+          if (existing.has(String(id))) preselected[id] = true;
+        });
+        setSelectedModels(preselected);
         if (result.models.length === 0 && result.message) {
           setModelsError(result.message);
         }
@@ -817,7 +825,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                 )}
                 {!modelsFetching && !modelsError && modelsList.length > 0 && (
                   <>
-                    <p className="field-hint">勾选需要添加的模型，可多选：</p>
+                    <p className="field-hint">勾选需要添加的模型，可多选（已添加的模型默认勾选，重复添加会自动去重）：</p>
                     <input
                       className="input models-search"
                       placeholder="搜索模型名称，如 deepseek…"

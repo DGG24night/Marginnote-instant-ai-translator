@@ -108,6 +108,14 @@ export const PROVIDER_PRESETS = [
     ],
   },
   {
+    name: "小米 MiMo",
+    baseURL: "https://api.xiaomimimo.com/v1",
+    models: [
+      { id: "mimo-v2.6-pro", supportsReasoning: true },
+      { id: "mimo-v2.6-flash", supportsReasoning: true },
+    ],
+  },
+  {
     name: "Ollama Cloud",
     baseURL: "https://ollama.com/api",
     models: [

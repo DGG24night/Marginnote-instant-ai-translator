@@ -274,6 +274,30 @@ function CopyIcon() {
   );
 }
 
+// 后退（用户提供的 houtui.svg：左尖括号）——AI 回答历史版本切换（上一个回答）
+const BACK_PATH =
+  "M716.879204 813.744345c14.09502 12.824073 15.126512 34.658358 2.303462 48.752354-12.843516 14.09502-34.678824 15.126512-48.752354 2.302439l-364.835266-332.676845c-14.114462-12.844539-15.127536-34.659381-2.302439-48.753377 0.733711-0.815575 1.486864-1.588171 2.302439-2.302439l0.078795-0.080841 0.13917-0.13917 364.616278-332.4773c14.074553-12.824073 35.909861-11.791557 48.752354 2.302439 12.824073 14.09502 11.792581 35.930327-2.303462 48.753377L380.032386 506.593873l336.845795 307.149449L716.879204 813.744345 716.879204 813.744345z";
+
+// 前进（用户提供的 qianjin.svg：右尖括号）——AI 回答历史版本切换（下一个回答）
+const FWD_PATH =
+  "M305.587883 813.744345c-14.09502 12.824073-15.126512 34.658358-2.303462 48.752354 12.843516 14.09502 34.678824 15.126512 48.752354 2.302439l364.835266-332.676845c14.114462-12.844539 15.127536-34.659381 2.302439-48.753377-0.733711-0.815575-1.486864-1.588171-2.302439-2.302439l-0.078795-0.080841-0.13917-0.13917L352.037798 148.369166c-14.074553-12.824073-35.909861-11.791557-48.752354 2.302439-12.824073 14.09502-11.792581 35.930327 2.303462 48.753377l336.845795 307.168891L305.588907 813.743322 305.587883 813.744345 305.587883 813.744345z";
+
+function BackIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      <path d={BACK_PATH} fill="currentColor" />
+    </svg>
+  );
+}
+
+function FwdIcon() {
+  return (
+    <svg className="icon-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      <path d={FWD_PATH} fill="currentColor" />
+    </svg>
+  );
+}
+
 // 拼接模式追加文本的智能连接策略（用户可编辑修正，此处仅为默认拼接规则）：
 //   - 前段以连字符结尾（PDF 跨行断词，如 "inter-"）→ 去连字符直接连接
 //   - 前段以句子终止符结尾 → 换行（视为新句子/段落起点）
@@ -370,7 +394,10 @@ function CardPage() {
   const [noteTitle, setNoteTitle] = useState(""); // 笔记标题（默认为单词/原句，可编辑）
   const [noteText, setNoteText] = useState(""); // 笔记编辑区内容（可含自动附带的查词/翻译结果）
   const [chatOpen, setChatOpen] = useState(false); // AI 对话界面（长按机器人图标进入）
-  const [chatMessages, setChatMessages] = useState([]); // [{role:"user"|"assistant", text}]
+  const [chatMessages, setChatMessages] = useState([]); // [{role:"user"|"assistant", text, reason?, versions?, vi?}]
+  // assistant 消息的 versions = 历次回答（重新回答保留旧版），vi = 当前展示版本下标；
+  // text/reason 恒等于 versions[vi]（切换版本时同步更新），无重新回答时无 versions 字段
+  const [chatLocate, setChatLocate] = useState(null); // 历史回放定位 {idx, id}：滚动到所点问答的提问位置并高亮
   const [chatDraft, setChatDraft] = useState(""); // AI 回复流式草稿（chatDelta 累积）
   const [reasonDraft, setReasonDraft] = useState(""); // 思考过程流式内容（reasoning 事件全量累积）
   const [reasonOpen, setReasonOpen] = useState(true); // 思考块展开状态（正文开始后自动折叠，可手动展开）
@@ -421,6 +448,7 @@ function CardPage() {
   const reAnsTimerRef = useRef(null); // 「重新回答」长按计时器
   const reAnsLongRef = useRef(false); // 「重新回答」长按已触发（抑制随后的 click）
   const reAnsTouchAtRef = useRef(0); // 「重新回答」最近触摸时间戳（忽略触摸后的合成 mouse 事件）
+  const reAnsVersionsRef = useRef(null); // 重新回答期间暂存的旧回答版本（chatDone/暂停时并入 versions）
   const noteKindRef = useRef(""); // 笔记编辑上下文类型（chat 回答进入编辑时用 lookup 颜色）
   const histNavListRef = useRef(null); // 快捷键历史导航：已加载的历史列表
   const histNavKindRef = useRef(""); // 快捷键历史导航：列表对应的类型（lookup/translate）
@@ -767,6 +795,8 @@ function CardPage() {
         setChatInput("");
         setChatSending(false);
         setChatEffortOpen(false);
+        reAnsVersionsRef.current = null; // 新任务开始：丢弃未完成的重新回答版本暂存
+        setChatLocate(null);
         // 新任务开始：思考块复位（展开、清空上一任务内容），折叠标记复位
         setReasonDraft("");
         setReasonOpen(true);
@@ -808,18 +838,26 @@ function CardPage() {
         setChatDraft(event.accumulated || "");
       } else if (event.type === "chatDone") {
         setChatDraft("");
-        // 思考内容随回答一起存档（折叠块默认收起，可展开回看）
-        setChatMessages((prev) => [...prev, {
-          role: "assistant",
-          text: String(event.text || ""),
-          reason: chatReasonDraftRef.current || "",
-        }]);
+        // 思考内容随回答一起存档（折叠块默认收起，可展开回看）；
+        // 重新回答产生的新回答并入旧回答版本列表（气泡下方 ‹ › 切换历史回答）
+        const doneText = String(event.text || "");
+        const doneReason = chatReasonDraftRef.current || "";
+        const pendingVersions = reAnsVersionsRef.current;
+        reAnsVersionsRef.current = null;
+        setChatMessages((prev) => {
+          if (pendingVersions && Array.isArray(pendingVersions.versions) && pendingVersions.versions.length) {
+            const versions = [...pendingVersions.versions, { text: doneText, reason: doneReason }];
+            return [...prev, { role: "assistant", text: doneText, reason: doneReason, versions, vi: versions.length - 1 }];
+          }
+          return [...prev, { role: "assistant", text: doneText, reason: doneReason }];
+        });
         setChatReasonDraft("");
         setChatSending(false);
       } else if (event.type === "chatError") {
         setChatDraft("");
         setChatReasonDraft("");
         setChatSending(false);
+        reAnsVersionsRef.current = null; // 回答失败：旧回答已随重新回答截断，清空暂存避免并入下一轮
         showHint(`AI 对话失败：${event.message || "请重试"}`);
       }
 
@@ -1006,19 +1044,17 @@ function CardPage() {
       const taH = taEl ? Math.min(Math.max(taEl.scrollHeight, 96), 356) : 96;
       height = tipH + titleH + taH + actionsH + 24 + bodyPad + toolbarH + hintH;
     } else if (chatOpen) {
-      // AI 对话界面：tip + 消息列表（scrollHeight 不受 max-height 裁剪影响）
+      // AI 对话界面：消息列表（scrollHeight 不受 max-height 裁剪影响）
       //   + 输入行（输入框+发送按钮，.chat-input-line）+ 间距(6) + 按钮行（模型/思考/新建对话/关闭）
       const panelEl = document.querySelector(".chat-panel");
-      const tipEl = panelEl ? panelEl.querySelector(".chat-tip") : null;
       const listEl = panelEl ? panelEl.querySelector(".chat-list") : null;
       const lineEl = panelEl ? panelEl.querySelector(".chat-input-line") : null;
       const rowEl = panelEl ? panelEl.querySelector(".chat-input-row") : null;
       const bodyPad = 24;
-      const tipH = tipEl ? tipEl.offsetHeight : 0;
       const listH = listEl ? Math.max(listEl.scrollHeight, 120) : 120;
       const inputH = lineEl ? lineEl.offsetHeight : 0;
       const rowH = rowEl ? rowEl.offsetHeight : 0;
-      height = tipH + listH + inputH + 6 + rowH + 16 + bodyPad + toolbarH + hintH;
+      height = listH + inputH + 6 + rowH + 16 + bodyPad + toolbarH + hintH;
     } else if (appendMode) {
       // 拼接模式：按「内容自然高度」计算，而不是 panel.offsetHeight。
       // panel 高度受卡片 maxHeight 钳制（flex 布局），文本越多 textarea 越早进入
@@ -1387,6 +1423,8 @@ function CardPage() {
     setChatInput("");
     setChatSending(false);
     setChatEffortOpen(false);
+    reAnsVersionsRef.current = null;
+    setChatLocate(null);
     setChatReasonDraft("");
     setChatReasonOpen(true);
     chatReasonCollapsedRef.current = false;
@@ -1399,6 +1437,8 @@ function CardPage() {
     setChatMessages([]);
     setChatDraft("");
     setChatEffortOpen(false);
+    reAnsVersionsRef.current = null;
+    setChatLocate(null);
     setChatReasonDraft("");
     setChatReasonOpen(true);
     chatReasonCollapsedRef.current = false;
@@ -1446,11 +1486,19 @@ function CardPage() {
     setChatSending(false);
     const partial = (chatDraftRef.current || "").trim();
     if (partial) {
-      setChatMessages((prev) => [...prev, {
-        role: "assistant",
-        text: partial,
-        reason: chatReasonDraftRef.current || "",
-      }]);
+      // 暂停产生的部分回答同样并入重新回答的版本列表（与 chatDone 同一规则）
+      const stopReason = chatReasonDraftRef.current || "";
+      const pendingVersions = reAnsVersionsRef.current;
+      reAnsVersionsRef.current = null;
+      setChatMessages((prev) => {
+        if (pendingVersions && Array.isArray(pendingVersions.versions) && pendingVersions.versions.length) {
+          const versions = [...pendingVersions.versions, { text: partial, reason: stopReason }];
+          return [...prev, { role: "assistant", text: partial, reason: stopReason, versions, vi: versions.length - 1 }];
+        }
+        return [...prev, { role: "assistant", text: partial, reason: stopReason }];
+      });
+    } else {
+      reAnsVersionsRef.current = null; // 无部分回答可保留：清空暂存，避免并入下一轮
     }
     setChatDraft("");
     setChatReasonDraft("");
@@ -1479,10 +1527,18 @@ function CardPage() {
   // 注意：historyKind / modeLabel 等都在本组件更靠前的位置引用，必须在此处（首次使用前）定义
   const chatPanelVisible = chatOpen && !noteOpen;
 
-  // 重新回答第 index 条回答：截断该条之前的对话（含触发它的提问）重新发送
+  // 重新回答第 index 条回答：截断该条之前的对话（含触发它的提问）重新发送；
+  // 被重答消息的历次回答先暂存到 reAnsVersionsRef，新回答完成后并入 versions（‹ › 切换）
   const reAnswerAt = useCallback(async (index) => {
+    const target = chatMessages[index];
+    if (!target || target.role !== "assistant") return;
     const prefix = chatMessages.slice(0, index).filter((m) => m && (m.role === "user" || m.role === "assistant"));
     if (prefix.length === 0) return;
+    reAnsVersionsRef.current = {
+      versions: Array.isArray(target.versions) && target.versions.length
+        ? target.versions
+        : [{ text: String(target.text || ""), reason: String(target.reason || "") }],
+    };
     setChatMessages(prefix);
     setChatDraft("");
     setChatSending(true);
@@ -1495,10 +1551,21 @@ function CardPage() {
         messages: prefix.map((m) => ({ role: m.role, content: m.text })),
       });
     } catch (e) {
+      reAnsVersionsRef.current = null; // 发送未成立（无 chatError 事件），清空暂存
       setChatSending(false);
       showHint(`重新回答失败：${(e && e.message) || "请重试"}`);
     }
   }, [chatMessages, showHint]);
+
+  // 切换第 index 条回答的历史版本（dir: -1 = 上一个 / +1 = 下一个）
+  const switchChatVersion = useCallback((index, dir) => {
+    setChatMessages((prev) => prev.map((m, j) => {
+      if (j !== index || !m || !Array.isArray(m.versions)) return m;
+      const vi = Math.min(Math.max((typeof m.vi === "number" ? m.vi : m.versions.length - 1) + dir, 0), m.versions.length - 1);
+      if (vi === m.vi) return m;
+      return { ...m, vi, text: m.versions[vi].text, reason: m.versions[vi].reason || "" };
+    }));
+  }, []);
 
   // 模型选择弹层确认：写入 chat 路由并持久化（= 上次使用的模型，跨会话记忆）；
   // target 非空时同时触发该条重新回答（await 持久化完成，保证插件读到新路由）
@@ -1668,6 +1735,25 @@ function CardPage() {
     const list = chatListRef.current;
     if (list) list.scrollTop = list.scrollHeight;
   }, [chatMessages, chatDraft, displayChatDraft, chatOpen]);
+
+  // 历史回放定位：滚动到所点问答的提问位置（贴近列表顶部）并短暂高亮。
+  // 声明在「滚动到底部」effect 之后：同一次提交内后执行，覆盖其 scrollTop。
+  // chatLocate 为 null 时是纯清理提交（消费即置空），不重复触发定位。
+  useEffect(() => {
+    if (!chatLocate) return undefined;
+    const idx = chatLocate.idx;
+    setChatLocate(null); // 无论定位成败都消费掉，避免后续 chatMessages 变化重复滚动
+    const list = chatListRef.current;
+    if (!list) return undefined;
+    const el = list.querySelector('[data-idx="' + idx + '"]');
+    if (!el) return undefined;
+    const lr = list.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    list.scrollTop += r.top - lr.top - 6;
+    el.classList.add("chat-msg-locate");
+    const timer = setTimeout(() => el.classList.remove("chat-msg-locate"), 1800);
+    return () => clearTimeout(timer);
+  }, [chatLocate]);
 
   // 机器人长按阈值（同「重新生成」400ms，早于系统长按手势）
   const ROBOT_LONG_PRESS_MS = 400;
@@ -2029,17 +2115,29 @@ function CardPage() {
     setHistoryItems([]);
   }, []);
 
-  // 点击历史条目：AI 问答 → 回放该轮问答到对话界面；查词/翻译 → 插件层推送缓存内容
+  // 点击历史条目：AI 问答 → 回放该轮问答（含此前对话上下文）到对话界面，
+  // 并定位到所点条目的提问位置；查词/翻译 → 插件层推送缓存内容
   const applyHistoryItem = useCallback(
     async (item) => {
       setHistoryOpen(false);
       setHistoryItems([]);
       if (historyKind === "chat") {
-        // 回放：作为对话上下文载入，可继续追问（后续发送全量历史）
-        setChatMessages([
-          { role: "user", text: String(item.question || "") },
-          { role: "assistant", text: String(item.answer || "") },
-        ].filter((m) => m.text));
+        // 回放：item.context = 该轮提问之前的消息序列（多轮对话快照；旧记录无此字段 → 仅单轮），
+        // 作为对话上下文载入，可继续追问（后续发送全量历史）
+        const ctx = Array.isArray(item.context)
+          ? item.context.filter((m) => m && (m.role === "user" || m.role === "assistant") && String(m.content || "").trim())
+          : [];
+        const msgs = ctx.map((m) => ({ role: m.role, text: String(m.content || "") }));
+        const qIdx = msgs.length; // 所点条目的提问在消息序列中的位置（上下文之后）
+        msgs.push({ role: "user", text: String(item.question || "") });
+        msgs.push({ role: "assistant", text: String(item.answer || "") });
+        const kept = msgs.filter((m) => m.text);
+        // 空消息被过滤后下标前移：重算提问位置
+        let keptQIdx = 0;
+        for (let i = 0; i < qIdx; i++) if (msgs[i].text) keptQIdx++;
+        setChatMessages(kept);
+        // 定位到所点问答的提问位置并短暂高亮（id 保证连续点击同一条也能重新触发）
+        setChatLocate({ idx: keptQIdx, id: Date.now() });
         return;
       }
       try {
@@ -2496,7 +2594,6 @@ const onAppendChange = (e) => {
             笔记编辑界面打开时隐藏（chatPanelVisible） */}
         {chatPanelVisible && (
           <div className="chat-panel" onDoubleClick={(e) => e.stopPropagation()}>
-            <div className="chat-tip">AI 对话：基于选中内容继续提问（回车发送）</div>
             <div className="chat-list" ref={chatListRef}>
               {chatMessages.length === 0 && !chatDraft && !chatSending && (
                 <div className="chat-empty">输入内容后回车发送，开始与 AI 对话…</div>
@@ -2504,8 +2601,9 @@ const onAppendChange = (e) => {
               {chatMessages.map((m, i) => (
                 m.role === "assistant" ? (
                   // AI 回复按 markdown 渲染（代码块/加粗/列表等与结果区一致）；
-                  // 气泡下方操作行：复制 / 添加笔记（单击建卡、双击编辑）/ 重新回答（长按选模型）
-                  <div key={i} className="chat-msg-wrap">
+                  // 气泡下方操作行：版本切换（重新回答后出现）/ 复制 / 添加笔记（单击建卡、双击编辑）/ 重新回答（长按选模型）；
+                  // data-idx 供历史回放定位滚动使用（chatLocate effect 按 data-idx 找提问节点）
+                  <div key={i} className="chat-msg-wrap" data-idx={i}>
                     {/* 已完成回答附带的思考过程：默认收起，可展开回看（非受控 details） */}
                     {m.reason ? (
                       <details className="reason-block">
@@ -2518,6 +2616,28 @@ const onAppendChange = (e) => {
                       dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
                     />
                     <div className="chat-msg-actions">
+                      {/* 回答版本切换：重新回答后 ‹ 2 / 2 ›，前后翻看同问题的历次回答 */}
+                      {Array.isArray(m.versions) && m.versions.length > 1 && (
+                        <span className="chat-ver-nav">
+                          <button
+                            className="icon-btn chat-act-btn chat-ver-btn"
+                            title="上一个回答"
+                            disabled={(m.vi || 0) <= 0}
+                            onClick={() => switchChatVersion(i, -1)}
+                          >
+                            <BackIcon />
+                          </button>
+                          <span className="chat-ver-label">{(m.vi || 0) + 1} / {m.versions.length}</span>
+                          <button
+                            className="icon-btn chat-act-btn chat-ver-btn"
+                            title="下一个回答"
+                            disabled={(m.vi || 0) >= m.versions.length - 1}
+                            onClick={() => switchChatVersion(i, 1)}
+                          >
+                            <FwdIcon />
+                          </button>
+                        </span>
+                      )}
                       <button
                         className="icon-btn chat-act-btn"
                         title="复制回答"
@@ -2549,7 +2669,7 @@ const onAppendChange = (e) => {
                     </div>
                   </div>
                 ) : (
-                  <div key={i} className="chat-msg chat-msg-user">{m.text}</div>
+                  <div key={i} className="chat-msg chat-msg-user" data-idx={i}>{m.text}</div>
                 )
               ))}
               {/* 等待回复：三个连续跃动的点；收到首个增量后切换为流式草稿 */}

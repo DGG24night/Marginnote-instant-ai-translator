@@ -2247,14 +2247,6 @@ html.card-fit .card-body {
   min-height: 0;
 }
 
-.chat-tip {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--accent);
-  margin-bottom: 8px;
-  flex-shrink: 0;
-}
-
 .chat-list {
   flex: 1 1 auto;
   min-height: 120px;
@@ -2310,6 +2302,46 @@ html.card-fit .card-body {
 
 .chat-act-btn:hover .icon-svg {
   opacity: 1;
+}
+
+/* 回答版本切换（重新回答后出现）：‹ 2 / 2 ›，与其他操作按钮同行同尺寸 */
+.chat-ver-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 4px;
+}
+
+.chat-ver-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.chat-ver-btn {
+  padding: 2px 4px;
+}
+
+.chat-ver-btn .icon-svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 历史回放定位高亮：滚动到所点问答的提问后短暂闪烁，帮助确认位置 */
+.chat-msg-locate {
+  animation: mniat-chat-locate-flash 1.8s ease-out;
+}
+
+@keyframes mniat-chat-locate-flash {
+  0%, 35% {
+    box-shadow: 0 0 0 2px var(--accent, #4a7dbe);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
 }
 
 /* 对话模型选择按钮（输入框左侧）：显示当前生效模型，超长省略 */

@@ -61,6 +61,9 @@ var MNIAIService = (function () {
   //   ├─────────────────┼───────────────────────────────────────────────┤
   //   │ 智谱 bigmodel.cn│ thinking.type: enabled | disabled              │
   //   ├─────────────────┼───────────────────────────────────────────────┤
+  //   │ 小米 MiMo        │ thinking.type: enabled | disabled              │
+  //   │ (.xiaomimimo.com)│ （仅开关无等级，off→disabled，其余→enabled）   │
+  //   ├─────────────────┼───────────────────────────────────────────────┤
   //   │ 百炼/SiliconFlow│ modelId 含 "deepseek" / "kimi" → reasoning_effort│
   //   │ /ModelScope/    │   关闭→"none"（官方取值）；其余档位透传         │
   //   │ Qwen 系         │ 其余（含 modelId 以 qwen 开头）→ enable_thinking │
@@ -126,6 +129,14 @@ var MNIAIService = (function () {
   // 蚂蚁百灵 Ring-2.6-1T：reasoning.effort 控制推理深度（唯一支持 reasoning 的模型，始终推理）
   function isRing26(modelId) {
     return /^ring-2\.6/i.test(String(modelId || "").trim());
+  }
+
+  // 小米 MiMo（api.xiaomimimo.com，官方文档 mimo.mi.com）：
+  // thinking.type 仅 enabled|disabled 两档（默认 enabled），无思考等级；
+  // 思考内容走 reasoning_content（流式 delta 与非流式 message 均已兼容）。
+  // 注意：思考模式下 temperature/top_p 会被服务端强制为推荐值，传入无副作用。
+  function isMimoStyle(provider) {
+    return /xiaomimimo\.com/.test(String(provider.baseURL || "").toLowerCase());
   }
 
   // 在 provider.models 中查找模型配置（含 supportsReasoning 标记）
@@ -206,6 +217,11 @@ var MNIAIService = (function () {
 
     // 5. 智谱：thinking.type
     if (isZhipuStyle(provider)) {
+      return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
+    }
+
+    // 5.5 小米 MiMo：thinking.type 仅 enabled|disabled（无思考等级，档位仅区分开关）
+    if (isMimoStyle(provider)) {
       return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
     }
 

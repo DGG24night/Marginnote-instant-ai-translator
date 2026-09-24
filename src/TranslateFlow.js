@@ -1200,16 +1200,19 @@ var MNIATFlow = (function () {
         onDone: function (full) {
           chatSession = null;
           pushEvent({ type: "chatDone", text: full });
-          // 记录问答历史（最近在前，同问题覆盖）：历史记录按钮在对话界面读取
+          // 记录问答历史（最近在前，同问题覆盖）：历史记录按钮在对话界面读取。
+          // context = 触发本轮提问之前的消息序列（回放完整对话并定位到该轮用）
           try {
             var q = "";
+            var lastUserIdx = -1;
             for (var i = messages.length - 1; i >= 0; i--) {
               if (messages[i] && messages[i].role === "user") {
                 q = String(messages[i].content || "");
+                lastUserIdx = i;
                 break;
               }
             }
-            MNIATChatHistory.add(q, full);
+            MNIATChatHistory.add(q, full, messages.slice(0, lastUserIdx >= 0 ? lastUserIdx : 0));
           } catch (e) { /* 历史记录失败不影响对话 */ }
         },
         onError: function (message) {
