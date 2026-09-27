@@ -5,7 +5,8 @@ var __MN_WEB_API_MNInstantAITranslatorAddon = (function () {
   const BRIDGE_SCHEME = "mnaddon";
   const BRIDGE_HOST = "bridge";
 
-  const MIN_WIDTH = 520;
+  // 最小宽度约取原 520 的 2/3；<700px 时设置页自动走窄屏单列布局（styles.css @media）
+  const MIN_WIDTH = 347;
   const MIN_HEIGHT = 420;
   const DEFAULT_WIDTH = 960;
   const DEFAULT_HEIGHT = 640;

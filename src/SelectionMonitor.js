@@ -11,7 +11,11 @@
 // 辅助摘录（2026-08-07）：
 //   框选/双击段落的"辅助摘录"选区不置 isSelectionText，但识别文本很可能
 //   写入 selectionText，因此不再以 isSelectionText 为门控，只要求文本非空。
-//   若菜单弹出时读不到文本，用 HUD 输出一次性诊断（console 日志不可见）。
+// 诊断 HUD 已移除（2026-09-27）：
+//   原在「菜单弹出但读不到文本」时弹 HUD 诊断内部状态，但其「存在选中信号」
+//   守卫依赖 isSelectionText / lastFocusNote——实测点击脑图空白时 isSelectionText
+//   仍可能残留为 true（此前在文档中划过词），守卫失效误弹提示打扰用户，
+//   故整体移除，调试信息一律走 console.log。
 
 var MNIATSelectionMonitor = (function () {
   var POLL_INTERVAL = 0.3;      // 轮询间隔（秒）
@@ -155,55 +159,10 @@ var MNIATSelectionMonitor = (function () {
     return null;
   }
 
-  // 一次性诊断：菜单弹出但「文本选区 + 焦点笔记摘录回退」都读不到文本时，
-  // 用 HUD 显示内部状态，帮助定位未知选区场景（console 日志不可见）。
-  // ⚠️ 2026-08-15：仅在「存在选中信号」时诊断——点击脑图空白（菜单弹出但
-  // isSelectionText=false 且无焦点笔记）是正常操作，不弹诊断。
+  // 菜单可见性边缘检测状态（tick 专用）：以「本次可见、上次不可见」判定菜单
+  // 新弹出，以「本次不可见、上次可见」判定菜单刚消失。菜单状态本身不影响
+  // 插件行为，仅作为选区结束 / 点击空白的时序信号。
   var menuWasVisible = false;
-  var lastDiagAt = 0;
-
-  function hasFocusNoteSignal() {
-    try {
-      var dc = readDocController();
-      if (dc) {
-        return !!(dc.visibleFocusNote || dc.focusNote || dc.lastFocusNote);
-      }
-      // 脑图模式：notebookController.focusNote
-      var studyController = Application.sharedInstance().studyController(targetWindow);
-      var nbc = studyController && studyController.notebookController;
-      return !!(nbc && (nbc.visibleFocusNote || nbc.focusNote));
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function diagnoseIfNeeded(menuVisibleNow) {
-    if (menuVisibleNow && !menuWasVisible) {
-      var text = readSelectionText();
-      if (!text) {
-        var focusInfo = readFocusNoteExcerpt();
-        if (focusInfo) text = focusInfo.primary;
-      }
-      if (!text && Date.now() - lastDiagAt > 3000) {
-        var dc = readDocController();
-        var hasSelectionSignal = (dc && !!dc.isSelectionText) || hasFocusNoteSignal();
-        if (!hasSelectionSignal) return; // 点击空白（无选中意图）：正常操作，不诊断
-        lastDiagAt = Date.now();
-        try {
-          var info = "无 docController";
-          if (dc) {
-            var st = dc.selectionText;
-            var fn = dc.visibleFocusNote || dc.focusNote || dc.lastFocusNote;
-            info = "isSelectionText=" + dc.isSelectionText +
-              ", selectionText=" + (st ? ("len " + String(st).length) : String(st)) +
-              ", focusNoteExcerpt=" + (fn && fn.excerptText ? ("len " + String(fn.excerptText).length) : "无");
-          }
-          Application.sharedInstance().showHUD("[翻译插件诊断] " + info, targetWindow, 3);
-        } catch (e) { /* 忽略 */ }
-      }
-    }
-    menuWasVisible = menuVisibleNow;
-  }
 
   function readAnchorRect() {
     try {
@@ -257,7 +216,7 @@ var MNIATSelectionMonitor = (function () {
     // 用户实测：MarginNote 左键/右键点击脑图空白都会弹出菜单。
     var menuJustShown = menuVisibleNow && !menuWasVisible;
     var menuJustHidden = !menuVisibleNow && menuWasVisible;
-    diagnoseIfNeeded(menuVisibleNow);
+    menuWasVisible = menuVisibleNow;
     var mindMapOnly = isMindMapOnly();
 
     var text = null;

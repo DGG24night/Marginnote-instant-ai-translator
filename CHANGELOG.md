@@ -1,5 +1,20 @@
 # 更新日志
 
+## v0.9.8（2026-09-27）
+
+### 修复
+
+- **点击脑图空白误弹「翻译插件诊断」HUD**：诊断提示原设计为「菜单弹出但读不到文本且存在选中信号」时才显示，但守卫依赖的 `isSelectionText` / `lastFocusNote` 存在残留——此前在文档中划过词后点击脑图空白，`isSelectionText` 仍为 `true`，守卫失效误弹提示。现整体移除该诊断 HUD（其定位的未知选区场景已由摘录回退等逻辑覆盖），调试信息一律走 `console.log`；划词触发、点击空白关闭卡片等行为不变。
+
+### 调整
+
+- **DeepSeek 官方适配更新**：预置模型更换为 deepseek-v4-flash / deepseek-v4-pro（官方 2026-09 文档取值，均为混合推理、默认开启思考）；思考强度 `reasoning_effort` 官方仅支持 high | max——低/中档映射为 high（官方最小档），高档映射为 max，与低/中保持区分。
+- **预置供应商模型刷新**：Moonshot Kimi 更新为 kimi-k3 / kimi-k2.7-code / kimi-k2.6；智谱 GLM 更新为 glm-5.3 / glm-5.3-flash / glm-4.5-air；火山引擎更新为 doubao-seed-2-1-lite / deepseek-v4-1-flash / glm-5-3-flash（托管第三方模型走通用 reasoning_effort 分支）；Ollama Cloud 调整为 gemma4:31b（非推理）+ gpt-oss:120b / 20b。
+- **设置页支持触摸拖拽排序**：提供商 / 模型 / 机器翻译服务列表的拖拽手柄新增 touch 路径（onTouchStart 进入同一拖拽状态机，touchmove 以非 passive 注册并 preventDefault 阻止页面滚动，touchend/touchcancel 结束），并忽略 touchend 后 UIWebView 500ms 内补发的合成 mouse 事件，iPad / iPhone 上可直接长按手柄拖动排序；手柄 CSS 增加 `touch-action: none` 与禁用长按菜单兜底。
+- **设置面板最小宽度缩小**：520 → 347（约原 2/3），<700px 时设置页自动走窄屏单列布局，小窗口下不再局促。
+- **AI 对话卡片高度优化**：消息发出后等待首个 chunk（思考/回答增量未到达）期间冻结卡片高度（沿用视口高度），不再随「用户消息气泡 + 加载点」逐步变高；思考/回答开始输出后恢复按内容增长，且生成期间（chatSending）与流式翻译一致保持高度只增不减，避免抖动。
+- **设置页标题样式统一**：分块标题（偏好 / 路由等）左侧统一 3px 圆角蓝竖条作几何锚点，标题加粗放大；提供商折叠标题的展开箭头染主题蓝替代竖条；「翻译」路由标题简化为「翻译」。
+
 ## v0.9.7（2026-09-25）
 
 ### 新功能

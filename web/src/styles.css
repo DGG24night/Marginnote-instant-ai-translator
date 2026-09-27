@@ -510,6 +510,14 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 仅拖拽手柄（不能放到整个列表上，否则列表内容无法滚动）：
+   触摸（iPad / iPhone）时拖拽手势不交给浏览器滚动 / 长按菜单，
+   由 useDragSort 的 touch 路径接管（touchmove preventDefault 阻止页面滚动） */
+.drag-handle {
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
 body.drag-sorting {
   user-select: none;
   -webkit-user-select: none;
@@ -588,7 +596,7 @@ body.drag-sorting {
 .section-collapse-head .provider-caret {
   font-size: 10px;
   transition: transform 0.15s;
-  color: var(--text-secondary);
+  color: var(--accent);
   flex-shrink: 0;
 }
 
@@ -597,8 +605,8 @@ body.drag-sorting {
 }
 
 .section-collapse-title {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: 700;
+  font-size: 15px;
   color: var(--text);
   white-space: nowrap;
 }
@@ -653,10 +661,25 @@ body.drag-sorting {
 
 /* 「偏好」分块标题与三列/换行的勾选栅格 */
 .subsection-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   margin: 20px 0 12px;
   color: var(--text);
+}
+
+/* 分组标题统一锚点：左侧 3px 圆角蓝竖条。蓝色只做几何锚点、不染文字，
+   避免小号蓝字在表单流里被误读为链接；三类标题共用同一节奏便于扫视。
+   提供商页折叠标题例外：行内已有展开箭头，竖条去掉、箭头染蓝（见下） */
+.subsection-title::before,
+.route-title::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 0.95em;
+  border-radius: 2px;
+  background: var(--accent);
+  margin-right: 8px;
+  vertical-align: -0.08em;
 }
 
 .checkbox-grid {
@@ -906,8 +929,9 @@ body.drag-sorting {
 }
 
 .route-title {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
   margin: 0 0 10px;
 }
 

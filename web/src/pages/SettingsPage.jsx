@@ -218,12 +218,18 @@ function DragIcon() {
 }
 
 // ---------- 拖拽排序（bar 图标手柄） ----------
-// 基于 mouse 事件实现，兼容 UIWebView 老内核（不依赖 HTML5 Drag & Drop / Pointer Events）。
+// 鼠标（macOS）与触摸（iPad / iPhone）双路径，兼容 UIWebView 老内核
+//（不依赖 HTML5 Drag & Drop / Pointer Events），共用同一套行测量与指示器逻辑：
+//   - 鼠标：手柄 onMouseDown 起拖，document mousemove/mouseup 跟踪；
+//   - 触摸：手柄 onTouchStart 进入同一 startDrag，document touchmove 以非 passive
+//     注册并 preventDefault 阻止页面滚动（手柄自身另有 touch-action: none 兜底），
+//     touchend / touchcancel 结束；touchend 后 500ms 内 UIWebView 补发的合成
+//     mouse 事件一律忽略，避免拖拽结束后被再次拉起。
 // 用法：const drag = useDragSort((from, to) => moveItem(path, from, to));
-//   - 每行 drag-handle 的 onMouseDown 调 drag.startDrag(index, e, listEl)；
+//   - 每行 drag-handle 的 onMouseDown / onTouchStart 调 drag.startDrag(index, e, listEl)；
 //   - 拖拽期间被拖行加 .is-dragging；插入位置由独立 .drop-indicator 元素
 //     实时渲染（覆盖 insertIndex === rows.length 末尾之后场景）；
-//   - mouseup / 窗口失焦结束，回调 onMove(from, to) 由调用方重排并持久化（仅一次）。
+//   - mouseup / touchend / 窗口失焦结束，回调 onMove(from, to) 由调用方重排并持久化（仅一次）。
 // 返回 { dragIndex, insertIndex, indicatorTop, startDrag }，其中
 //   indicatorTop 为相对 listEl 顶部的像素偏移（拖动未开始时为 null）。
 function useDragSort(onMove) {
@@ -233,6 +239,9 @@ function useDragSort(onMove) {
   const stRef = useRef(null); // { index, insertIndex, indicatorTop, rows, listTop }
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  // 最近一次触摸结束时间戳：touchend 后 UIWebView 会补发合成 mouse 事件，
+  // 500ms 内的 mousedown/mouseup 一律忽略（触摸拖拽已由 touch 路径处理完毕）
+  const lastTouchAtRef = useRef(0);
 
   const clearState = useCallback(() => {
     stRef.current = null;
@@ -244,7 +253,11 @@ function useDragSort(onMove) {
   const handleMove = useCallback((e) => {
     const st = stRef.current;
     if (!st) return;
-    const y = e.clientY;
+    // 触摸拖拽中阻止页面滚动（touchmove 监听以非 passive 注册，preventDefault 生效）
+    if (e.touches && e.touches.length && e.cancelable) e.preventDefault();
+    // 鼠标事件取 clientY；触摸事件取第一个触点的 clientY
+    const t = e.touches && e.touches[0];
+    const y = t ? t.clientY : e.clientY;
     const rows = st.rows;
     // 插入位置 = "插到 target 索引之前"（target=rows.length 表示末尾之后）
     //   鼠标在某行上半部分 → 立刻 target=该行索引（break）；
@@ -271,10 +284,19 @@ function useDragSort(onMove) {
     }
   }, []);
 
-  const handleUp = useCallback(() => {
+  const handleUp = useCallback((e) => {
+    // 触摸结束：记录时间戳（抑制随后的合成 mouse 事件），并阻止 touchend 默认行为
+    //（WebKit 下可一并抑制合成 mouse 事件，时间戳作为双保险）
+    if (e && (e.type === "touchend" || e.type === "touchcancel")) {
+      lastTouchAtRef.current = Date.now();
+      if (e.cancelable) e.preventDefault();
+    }
     const st = stRef.current;
     document.removeEventListener("mousemove", handleMove, true);
     document.removeEventListener("mouseup", handleUp, true);
+    document.removeEventListener("touchmove", handleMove);
+    document.removeEventListener("touchend", handleUp);
+    document.removeEventListener("touchcancel", handleUp);
     window.removeEventListener("blur", handleUp);
     document.body.classList.remove("drag-sorting");
     if (!st) return;
@@ -287,8 +309,15 @@ function useDragSort(onMove) {
   }, [handleMove, clearState]);
 
   const startDrag = useCallback((index, e, listEl) => {
-    if (!e || e.button !== 0) return; // 仅鼠标左键
-    e.preventDefault(); // 阻止文本选择 / 原生拖拽
+    if (!e) return;
+    const isTouch = !!(e.touches && e.touches.length);
+    // 仅鼠标左键（触摸事件没有 button 字段）
+    if (!isTouch && e.button !== 0) return;
+    // 触摸结束后的合成 mouse 事件不重复拉起拖拽（触摸路径已在 touchstart 进入）
+    if (!isTouch && Date.now() - lastTouchAtRef.current < 500) return;
+    // 阻止文本选择 / 原生拖拽（React 合成 touchstart 是 passive 的，
+    // preventDefault 无效，触摸路径靠手柄 CSS touch-action + touchmove preventDefault）
+    if (!isTouch) e.preventDefault();
     e.stopPropagation();
     if (!listEl) return;
     // 拖动开始时清除文本选区（避免 mousedown 后 UIWebView 选区残留产生蓝色矩形覆盖）
@@ -313,6 +342,15 @@ function useDragSort(onMove) {
     document.body.classList.add("drag-sorting");
     document.addEventListener("mousemove", handleMove, true);
     document.addEventListener("mouseup", handleUp, true);
+    // 触摸路径：touchmove 必须以非 passive 注册才能 preventDefault 阻止页面滚动
+    try {
+      document.addEventListener("touchmove", handleMove, { passive: false });
+    } catch (err) {
+      // 极老引擎不支持 options 对象，退化为 capture 参数（捕获标记同为 false，移除时一致）
+      document.addEventListener("touchmove", handleMove);
+    }
+    document.addEventListener("touchend", handleUp);
+    document.addEventListener("touchcancel", handleUp);
     window.addEventListener("blur", handleUp);
   }, [handleMove, handleUp]);
 
@@ -616,6 +654,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
           title="拖动排序提供商（长按「重新生成」的模型列表顺序随之调整）"
           aria-label="拖动排序提供商"
           onMouseDown={(e) => dragProps.startDrag(index, e, listRef.current)}
+          onTouchStart={(e) => dragProps.startDrag(index, e, listRef.current)}
         >
           <DragIcon />
         </button>
@@ -685,6 +724,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                     title="拖动排序模型（长按「重新生成」列表顺序随之调整）"
                     aria-label="拖动排序模型"
                     onMouseDown={(e) => modelDrag.startDrag(modelIndex, e, modelListRef.current)}
+                    onTouchStart={(e) => modelDrag.startDrag(modelIndex, e, modelListRef.current)}
                   >
                     <DragIcon />
                   </button>
@@ -917,6 +957,7 @@ function MachineProviderCard({ mp, idx, dragProps, listRef }) {
           title="拖动排序机器翻译服务（长按「重新生成」列表顺序随之调整）"
           aria-label="拖动排序机器翻译服务"
           onMouseDown={(e) => dragProps.startDrag(idx, e, listRef.current)}
+          onTouchStart={(e) => dragProps.startDrag(idx, e, listRef.current)}
         >
           <DragIcon />
         </button>
@@ -1939,7 +1980,7 @@ function SettingsPage() {
 
         {activeTab === "routing" && (
           <Section title="模型路由">
-            <RouteEditor kind="translate" title="翻译（句子/段落）" />
+            <RouteEditor kind="translate" title="翻译" />
             <RouteEditor kind="lookup" title="单击机器人图标（AI解释）" />
             <RouteEditor
               kind="robotDouble"

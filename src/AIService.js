@@ -39,15 +39,17 @@ var MNIAIService = (function () {
     return base + "/chat/completions";
   }
 
-  // 思考模式适配（2026-08-09 按"提供商 + 模型 ID"细分；2026-08-10 新增火山/蚂蚁百灵）：
+  // 思考模式适配（2026-08-09 按"提供商 + 模型 ID"细分；2026-08-10 新增火山/蚂蚁百灵；
+  // 2026-09-25 DeepSeek 官方按最新文档改为 reasoning_effort 仅 high|max）：
   //
   //   ┌─────────────────┬───────────────────────────────────────────────┐
   //   │ doubao 模型     │ 任何供应商托管的 doubao 均优先命中（火山方舟    │
   //   │ (modelId^doubao)│ 官方 + 百炼/SiliconFlow/自定义等）：           │
   //   │                 │ thinking.type=disabled|enabled 控制开关        │
   //   ├─────────────────┼───────────────────────────────────────────────┤
-  //   │ DeepSeek 官方   │ thinking.type=disabled|enabled 控制开关；          │
-  //   │ (.deepseek.com) │ 开启时辅以 reasoning_effort=low|medium|high       │
+  //   │ DeepSeek 官方   │ thinking.type=disabled|enabled 控制开关；        │
+  //   │ (.deepseek.com) │ 开启时 reasoning_effort 仅 high|max：           │
+  //   │                 │ low/medium→high，high→max                     │
   //   ├─────────────────┼───────────────────────────────────────────────┤
   //   │ Moonshot        │ kimi-k3 → reasoning_effort: low|high|max        │
   //   │ (.moonshot.cn)  │   关闭→low（k3 始终思考，无 none）；medium→high  │
@@ -174,10 +176,14 @@ var MNIAIService = (function () {
       return { thinking: { type: effort === "off" ? "disabled" : "enabled" } };
     }
 
-    // 2. DeepSeek 官方：双参数（开关 + 强度）
+    // 2. DeepSeek 官方（api-docs.deepseek.com，2026-09 文档）：双参数（开关 + 强度）。
+    //    thinking.type: enabled|disabled 控制思考开关（默认 enabled）；
+    //    reasoning_effort 取值仅 high|max（默认 high；服务端虽把 low/medium 兼容映射为
+    //    high、xhigh 映射为 max，但官方取值只有这两个）。
+    //    档位映射：低/中 → high（官方最小档），高 → max（与低/中保持区分）。
     if (isDeepSeekStyle(provider)) {
       if (effort === "off") return { thinking: { type: "disabled" } };
-      return { thinking: { type: "enabled" }, reasoning_effort: effort };
+      return { thinking: { type: "enabled" }, reasoning_effort: effort === "high" ? "max" : "high" };
     }
 
     // 3. Moonshot Kimi：按 modelId 分支

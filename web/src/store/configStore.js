@@ -42,9 +42,11 @@ export const PROVIDER_PRESETS = [
   {
     name: "DeepSeek",
     baseURL: "https://api.deepseek.com/v1",
+    // model 官方取值仅 deepseek-v4-flash / deepseek-v4-pro（api-docs.deepseek.com，
+    // 2026-09）；两者均为混合推理，thinking.type 默认 enabled
     models: [
-      { id: "deepseek-chat", supportsReasoning: false },
-      { id: "deepseek-reasoner", supportsReasoning: true },
+      { id: "deepseek-v4-flash", supportsReasoning: true },
+      { id: "deepseek-v4-pro", supportsReasoning: true },
     ],
   },
   {
@@ -76,24 +78,33 @@ export const PROVIDER_PRESETS = [
   {
     name: "Moonshot Kimi",
     baseURL: "https://api.moonshot.cn/v1",
-    models: [{ id: "moonshot-v1-8k", supportsReasoning: false }],
+    // kimi-k3 始终思考（reasoning_effort: low|high|max）；kimi-k2.7-code 思考始终
+    // 开启；kimi-k2.6 由 thinking.type 控制开关（适配见 src/AIService.js）
+    models: [
+      { id: "kimi-k3", supportsReasoning: true },
+      { id: "kimi-k2.7-code", supportsReasoning: true },
+      { id: "kimi-k2.6", supportsReasoning: true },
+    ],
   },
   {
     name: "智谱 GLM",
     baseURL: "https://open.bigmodel.cn/api/paas/v4",
+    // GLM 系列由 thinking.type 控制思考开关（见 src/AIService.js isZhipuStyle）
     models: [
-      { id: "glm-4-flash", supportsReasoning: false },
-      { id: "glm-4-air", supportsReasoning: false },
+      { id: "glm-5.3", supportsReasoning: true },
+      { id: "glm-5.3-flash", supportsReasoning: true },
+      { id: "glm-4.5-air", supportsReasoning: true },
     ],
   },
   {
     name: "火山引擎",
     baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+    // doubao-* 走 thinking.type（isDoubaoModel）；托管的 deepseek/glm 走通用
+    // reasoning_effort 分支，「测试」的探测会自动校正 supportsReasoning 标记
     models: [
-      { id: "doubao-seed-1-6-250615", supportsReasoning: true },
-      { id: "doubao-seed-1-6-flash-250615", supportsReasoning: true },
-      { id: "doubao-1-5-pro-32k-250115", supportsReasoning: true },
-      { id: "doubao-1-5-lite-32k-250115", supportsReasoning: false },
+      { id: "doubao-seed-2-1-lite-260915", supportsReasoning: true },
+      { id: "deepseek-v4-1-flash-260910", supportsReasoning: true },
+      { id: "glm-5-3-flash-260828", supportsReasoning: true },
     ],
   },
   {
@@ -118,12 +129,11 @@ export const PROVIDER_PRESETS = [
   {
     name: "Ollama Cloud",
     baseURL: "https://ollama.com/api",
+    // gemma 系列为非推理模型；gpt-oss 原生支持 reasoning_effort
     models: [
+      { id: "gemma4:31b", supportsReasoning: false },
       { id: "gpt-oss:120b", supportsReasoning: true },
       { id: "gpt-oss:20b", supportsReasoning: true },
-      { id: "qwen3-coder:480b", supportsReasoning: true },
-      { id: "deepseek-v3.1:671b", supportsReasoning: true },
-      { id: "glm-4.6", supportsReasoning: false },
     ],
   },
   {

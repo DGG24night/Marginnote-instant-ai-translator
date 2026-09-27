@@ -1051,10 +1051,19 @@ function CardPage() {
       const lineEl = panelEl ? panelEl.querySelector(".chat-input-line") : null;
       const rowEl = panelEl ? panelEl.querySelector(".chat-input-row") : null;
       const bodyPad = 24;
-      const listH = listEl ? Math.max(listEl.scrollHeight, 120) : 120;
-      const inputH = lineEl ? lineEl.offsetHeight : 0;
-      const rowH = rowEl ? rowEl.offsetHeight : 0;
-      height = listH + inputH + 6 + rowH + 16 + bodyPad + toolbarH + hintH;
+      // 等待首 chunk（已发送、思考与回答增量都未到达）：冻结高度——用户消息气泡与
+      // 加载点不参与撑高，直接沿用当前卡片高度（= 视口高度）；否则消息一发出卡片就
+      // 逐步变高，观感卡顿。收到首个思考/回答 chunk 后恢复按 scrollHeight 随内容
+      // 增长（上限仍由下方 limits.max 钳制，超出后列表内部滚动）。
+      const waitingFirstChunk = chatSending && !chatReasonDraft && !chatDraft;
+      if (waitingFirstChunk) {
+        height = window.innerHeight;
+      } else {
+        const listH = listEl ? Math.max(listEl.scrollHeight, 120) : 120;
+        const inputH = lineEl ? lineEl.offsetHeight : 0;
+        const rowH = rowEl ? rowEl.offsetHeight : 0;
+        height = listH + inputH + 6 + rowH + 16 + bodyPad + toolbarH + hintH;
+      }
     } else if (appendMode) {
       // 拼接模式：按「内容自然高度」计算，而不是 panel.offsetHeight。
       // panel 高度受卡片 maxHeight 钳制（flex 布局），文本越多 textarea 越早进入
@@ -1131,10 +1140,11 @@ function CardPage() {
     }
     height = Math.ceil(height);
 
-    // 打字机期间高度只增不减：delta 每 30ms 到达，markdown 局部渲染（如代码块/标题
+    // 流式期间高度只增不减：delta 每 30ms 到达，markdown 局部渲染（如代码块/标题
     // 未闭合）可能让测量高度短暂回缩，强制单调递增可避免卡片上下抖动，保证「逐渐、
     // 平滑增大」；完成（done）后按最终内容精确落位。
-    if (state.status === "streaming" && height < lastHeightRef.current) {
+    // AI 对话生成期间（chatSending）同理：思考/回答 chunk 驱动高度单调增长。
+    if ((state.status === "streaming" || chatSending) && height < lastHeightRef.current) {
       height = lastHeightRef.current;
     }
 
