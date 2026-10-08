@@ -237,26 +237,29 @@ body {
 .settings-page {
   max-width: 920px;
   margin: 0 auto;
-  padding: 20px 24px 60px;
-  /* 让内容在自身容器内滚动，而非文档根滚动：
-     根的滚动条由 WebView 原生绘制、CSS 无法隐藏；容器内滚动条归 CSS 控制，
-     配合全局滚动条规则实现「静止隐藏、滚动时显示」 */
+  /* 四边留白统一 10px（与「插件开关 → 标签栏」间距一致，2026-10-08）：
+     白色内容区与窗口底部/左右边缘的距离随之统一 */
+  padding: 12px 10px 10px;
+  /* 纵向 flex 布局（2026-10-08）：头部 / 查词翻译开关 / 标签栏固定在滚动区外，
+     仅 .settings-content 在下方白色区块内滚动——滚动内容不会从标签栏上方穿过；
+     开关固定在标签栏上方，任何滚动状态下都不会被遮挡。
+     （旧实现整页滚动 + 标签栏 sticky 悬浮，滚动时内容会穿过标签栏上缘，不美观）
+     滚动条仍在容器内滚动，归 CSS 控制，配合全局滚动条规则实现「静止隐藏、滚动时显示」 */
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 顶部等宽标签导航（宽屏完整文案，窄屏缩写） */
 .settings-tabs {
   display: flex;
   gap: 4px;
-  margin-top: 16px;
+  margin-top: 10px;
   padding: 4px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
-  position: sticky;
-  top: 8px;
-  z-index: 5;
+  flex-shrink: 0; /* 固定在滚动区外：不随内容滚动，也不再需要 sticky */
 }
 
 .settings-tab {
@@ -289,9 +292,7 @@ body {
   display: none;
 }
 
-.settings-content .section {
-  margin-top: 16px;
-}
+/* .settings-content .section 的样式（白色容器内扁平化）见 .settings-content 定义处 */
 
 /* 窄屏：标签缩写；表单字段改单列 */
 @media (max-width: 700px) {
@@ -325,7 +326,8 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  flex-shrink: 0; /* 固定在滚动区外 */
 }
 
 .settings-header h1 {
@@ -391,7 +393,34 @@ body {
 .dual-toggle {
   display: flex;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 10px;
+  flex-shrink: 0; /* 固定在滚动区外：标签栏上方，任何滚动状态下不被遮挡 */
+}
+
+/* 设置内容滚动区：标签栏下方的白色圆角矩形，唯一滚动容器。
+   间距与「插件开关 → 标签栏」一致（10px），滚动发生在白色容器内部 */
+.settings-content {
+  flex: 1 1 0;
+  min-height: 0; /* flex 子项允许收缩到内容高度以下，overflow 滚动才能生效 */
+  overflow-y: auto;
+  margin-top: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px 20px;
+}
+
+/* 白色容器内不再嵌套卡片边框：section 扁平化，避免滚动时嵌套圆角割裂 */
+.settings-content .section {
+  margin-top: 16px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+.settings-content .section:first-child {
+  margin-top: 0;
 }
 
 .dual-toggle .master-toggle {
@@ -722,7 +751,7 @@ body.drag-sorting {
 .route-editor.mt-route-editor {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px dashed var(--border);
+  border-top: 1px solid var(--border); /* 与上方各路由分隔回归一致（原为 dashed，2026-10-08） */
 }
 
 .provider-meta {

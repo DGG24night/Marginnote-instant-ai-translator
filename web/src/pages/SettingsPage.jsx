@@ -641,6 +641,19 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     ? modelsList.filter((m) => String(m).toLowerCase().includes(modelQuery.trim().toLowerCase()))
     : modelsList;
 
+  // 全选 / 取消全选：作用于当前搜索过滤后的可见列表（无搜索时即全部模型）。
+  // 点击全选勾选可见列表所有模型，按钮变为「取消全选」，再次点击清空本次勾选
+  // （只影响勾选状态，不改动已添加的模型；「添加选中」仍按已有模型自动去重）
+  const allFilteredSelected = filteredModels.length > 0 &&
+    filteredModels.every((m) => selectedModels[m]);
+  const toggleSelectAll = () => {
+    setSelectedModels((prev) => {
+      const next = { ...prev };
+      filteredModels.forEach((m) => { next[m] = !allFilteredSelected; });
+      return next;
+    });
+  };
+
   return (
     <div
       className={
@@ -697,7 +710,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
             </span>
           </Field>
 
-          <Field label="API Key（仅保存在本地）">
+          <Field label="API Key">
             <SecretInput
               placeholder="sk-..."
               value={provider.apiKey}
@@ -894,6 +907,13 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                         <div className="models-picker-actions">
                           <button className="btn btn-sm" onClick={addSelectedModels} disabled={selectedCount === 0}>
                             添加选中（{selectedCount}）
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={toggleSelectAll}
+                            disabled={filteredModels.length === 0}
+                          >
+                            {allFilteredSelected ? "取消全选" : "全选"}
                           </button>
                           <button className="btn btn-sm" onClick={() => setModelsShown(false)}>
                             关闭
@@ -1385,8 +1405,16 @@ function SettingsPage() {
   const [presetIndex, setPresetIndex] = useState(0);
   const [mtPresetIndex, setMtPresetIndex] = useState(0);
   const [activeTab, setActiveTab] = useState("general");
+  const settingsContentRef = useRef(null); // 内容滚动区：切标签页时重置滚动位置
   const [aiProvidersOpen, setAiProvidersOpen] = useState(false); // AI 服务提供商默认折叠
   const [mtOpen, setMtOpen] = useState(false);                    // 机器翻译服务默认折叠
+
+  // 切换标签页：重置内容区滚动。滚动容器跨标签页复用，上个标签页滚到底部后
+  // scrollTop 会被带进新标签页——内容较短时被钳制到底部空白区，表现为「看不到设置内容」
+  const switchTab = (id) => {
+    setActiveTab(id);
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = 0;
+  };
 
   // 提供商 / 机器翻译服务 拖拽排序（bar 图标手柄；顺序持久化，长按「重新生成」列表同步）
   const providerListRef = useRef(null);
@@ -1446,7 +1474,7 @@ function SettingsPage() {
           <button
             key={tab.id}
             className={`settings-tab ${activeTab === tab.id ? "is-active" : ""}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => switchTab(tab.id)}
             title={tab.label}
           >
             <span className="settings-tab-full">{tab.label}</span>
@@ -1455,7 +1483,7 @@ function SettingsPage() {
         ))}
       </nav>
 
-      <div className="settings-content">
+      <div className="settings-content" ref={settingsContentRef}>
         {activeTab === "general" && (
           <Section title="常规">
             {/* ===== 通用（置顶） ===== */}

@@ -437,6 +437,8 @@ function CardPage() {
   const noteTextareaRef = useRef(null); // 笔记编辑区（聚焦用；高度由 flex 布局接管）
   const addTimerRef = useRef(null); // 「添加」按钮单击/双击判定计时器
   const robotTimerRef = useRef(null); // 机器人单击/双击判定计时器
+  const robotLastClickAtRef = useRef(0); // 机器人上一次点击时间（click 自判定双击用，不依赖原生 dblclick）
+  const robotDoubleFiredAtRef = useRef(0); // 机器人双击触发时刻（多路径触发闩锁）
   const robotPressTimerRef = useRef(null); // 机器人长按计时器（进入 AI 对话）
   const robotLongFiredRef = useRef(false); // 机器人长按已触发（抑制随后的 click）
   const robotTouchAtRef = useRef(0); // 机器人最近触摸时间戳（忽略触摸后的合成 mouse 事件）
@@ -1767,9 +1769,16 @@ function CardPage() {
 
   // 机器人长按阈值（同「重新生成」400ms，早于系统长按手势）
   const ROBOT_LONG_PRESS_MS = 400;
-  // 单击/双击判定窗口：鼠标 280ms；触摸（iPad 手指）双击间隔通常略长，放宽到 320ms
-  const ROBOT_TAP_MS = 280;
-  const ROBOT_TOUCH_TAP_MS = 320;
+  // 单击/双击判定窗口：鼠标与触摸统一 450ms（与图钉 PIN_DOUBLE_CLICK_MS 一致）。
+  // 2026-10-08 修复「Apple Pencil 双击机器人只出 AI 解释」：此前触摸窗口 320ms，而 Apple Pencil
+  // 的双击节奏（持笔像按圆珠笔一样点两下）通常落在 320–500ms，第二下落在窗口外 → 第一下超时
+  // 触发 AI 解释、第二下再开新计时器重复触发。450ms 覆盖系统双击间隔（约 500ms）；代价是单击
+  // AI 解释延迟到 450ms 才触发，与图钉「先固定后动作」的手感一致。
+  const ROBOT_TAP_MS = 450;
+  const ROBOT_TOUCH_TAP_MS = 450;
+  // 同一次双击可能同时命中「click 自判定 / e.detail / 原生 dblclick」多条路径（彼此相差仅数毫秒），
+  // 闩锁期内忽略重复触发，避免 robotDouble 连发两次（与图钉 PIN_TOGGLE_LATCH_MS 同理）
+  const ROBOT_DOUBLE_LATCH_MS = 250;
   const clearRobotTimers = () => {
     if (robotTimerRef.current) {
       clearTimeout(robotTimerRef.current);
@@ -1787,7 +1796,7 @@ function CardPage() {
     openChatRef.current(); // 长按进入 AI 对话：功能常开（设置开关已移除）
   };
 
-  // 鼠标路径：mousedown 起长按计时；click 经 280ms 延迟与双击区分；长按后抑制 click
+  // 鼠标路径：mousedown 起长按计时；click 经 ROBOT_TAP_MS 延迟与双击区分；长按后抑制 click
   const onRobotMouseDown = () => {
     if (isRecentRobotTouch()) return;
     robotLongFiredRef.current = false;
@@ -1812,16 +1821,36 @@ function CardPage() {
     if (robotLongFiredRef.current) robotLongFiredRef.current = false;
   };
 
-  const onRobotClick = () => {
+  // 双击触发（robotDouble = 长难句解释）：click 自判定 / e.detail / 原生 dblclick 多路径共享闩锁，
+  // 同一次双击只触发一次；触发时撤销挂起的单击动作，并重置点击计时（避免三连击被当成第二次双击）
+  const fireRobotDouble = () => {
+    const now = Date.now();
+    if (now - robotDoubleFiredAtRef.current < ROBOT_DOUBLE_LATCH_MS) return;
+    robotDoubleFiredAtRef.current = now;
+    robotLastClickAtRef.current = 0;
+    if (robotTimerRef.current) {
+      clearTimeout(robotTimerRef.current);
+      robotTimerRef.current = null;
+    }
+    runRobotPrompt("robotDouble");
+  };
+
+  const onRobotClick = (e) => {
     if (isRecentRobotTouch()) return;
     if (robotLongFiredRef.current) {
       robotLongFiredRef.current = false;
       return; // 长按已进入 AI 对话，点击不触发 prompt
     }
-    if (robotTimerRef.current) {
-      // 判定窗口内第二次点击：判定为双击，由 onRobotDoubleClick 处理
-      clearTimeout(robotTimerRef.current);
-      robotTimerRef.current = null;
+    const now = Date.now();
+    const detail = (e && typeof e.detail === "number") ? e.detail : 1;
+    // 2026-10-08：不再把双击委托给原生 dblclick——卡片 WebView 的 document 级 mousedown
+    // （onCardMouseDown 为保窗口焦点而 blur 按钮）会打断原生双击序列，dblclick 不可靠
+    // （同图钉 2026-09-18 的问题）。改为 click 上自判定：窗口内第二次点击 → 双击。
+    const isDouble = detail >= 2 ||
+      (robotLastClickAtRef.current > 0 && now - robotLastClickAtRef.current <= ROBOT_TAP_MS);
+    robotLastClickAtRef.current = now;
+    if (isDouble) {
+      fireRobotDouble();
       return;
     }
     robotTimerRef.current = setTimeout(() => {
@@ -1830,25 +1859,24 @@ function CardPage() {
     }, ROBOT_TAP_MS);
   };
 
+  // 原生 dblclick 兜底：环境若仍派发该事件，与 click 自判定共享闩锁，不会重复触发
   const onRobotDoubleClick = (e) => {
     if (e && typeof e.preventDefault === "function") e.preventDefault();
     if (isRecentRobotTouch()) return;
-    if (robotTimerRef.current) {
-      clearTimeout(robotTimerRef.current);
-      robotTimerRef.current = null;
-    }
     if (robotLongFiredRef.current) {
       robotLongFiredRef.current = false;
       return;
     }
-    runRobotPrompt("robotDouble");
+    fireRobotDouble();
   };
 
-  // 触摸路径（iPad / Apple Pencil）：长按 → AI 对话；轻点 → 单击 prompt；连续两次轻点 → 双击 prompt。
+  // 触摸路径（iPad 手指 / Apple Pencil）：长按 → AI 对话；轻点 → 单击 prompt；连续两次轻点 → 双击 prompt。
   // 触摸后的合成 mouse 事件 500ms 内一律忽略，避免双触发。
   // ⚠️ 2026-09-23：此前轻点在 touchend 立即触发单击 prompt，导致 iPad 上没有双击判定
   // （第一次轻点就打出单击 prompt，长难句解释永远触发不了）。现与鼠标路径一致：
   // 轻点先起 ROBOT_TOUCH_TAP_MS 判定计时器，窗口内第二次轻点 → robotDouble，超时才走 explain。
+  // ⚠️ 2026-10-08：窗口 320 → 450ms——Apple Pencil 双击节奏（320–500ms）慢于手指连点，
+  // 320ms 窗口下第二支笔尖落在窗口外，表现为「双击只出 AI 解释」；与图钉 450ms 窗口对齐。
   const bindRobotTouch = useCallback((el) => {
     if (robotTouchCleanupRef.current) {
       robotTouchCleanupRef.current();
@@ -1906,9 +1934,7 @@ function CardPage() {
       if (!wasActive) return;
       // 上一次轻点的判定计时器仍在 → 本次为窗口内的第二次轻点 = 双击（长难句解释）
       if (robotTimerRef.current) {
-        clearTimeout(robotTimerRef.current);
-        robotTimerRef.current = null;
-        runRobotPrompt("robotDouble");
+        fireRobotDouble(); // 内部清挂起的单击计时器，并带闩锁防多路径重复触发
         return;
       }
       robotTimerRef.current = setTimeout(() => {
