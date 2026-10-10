@@ -474,9 +474,13 @@ body {
 
 /* 设置页「服务提供商」拖拽排序手柄（bar 图标，与结果卡片工具栏最左侧图标同款）：
    拖动提供商/模型调整顺序，长按「重新生成」的模型列表按同样顺序展示 */
-.drag-list {
+.drag-list,
+.model-list {
   position: relative;
 }
+/* .model-list 也必须是定位元素：模型行拖拽的 .drop-indicator（absolute）以
+   modelListRef 元素顶部计算 indicatorTop，若此处无定位，指示器会以最近的
+   定位祖先（外层 .drag-list，即提供商卡片列表）为基准渲染，蓝线位置整体偏上 */
 
 .drag-handle {
   flex-shrink: 0;
@@ -789,7 +793,7 @@ body.drag-sorting {
   margin-right: 0;
 }
 
-/* 测试按钮：默认显示「测试中…」，hover 时切换为「取消测试」（点击即取消）。
+/* 测试按钮：测试进行中显示「测试中 + 灰色实时计时」，hover 时切换为「取消测试」（点击即取消）。
    .btn-test 仅在某次测试进行中挂到对应按钮上；非测试按钮仍显示原文案 */
 .btn-test .btn-test-hover {
   display: none;
@@ -799,6 +803,17 @@ body.drag-sorting {
 }
 .btn-test:hover .btn-test-hover {
   display: inline;
+}
+
+/* 「测试中」后的实时计时：灰色弱化，tabular-nums 防数字跳动引起按钮宽度抖动 */
+.btn-test .btn-test-timer {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 批量测试进度行（.field-hint 本身灰色）的实时计时：tabular-nums 防跳动 */
+.bulk-elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 .model-test-result {

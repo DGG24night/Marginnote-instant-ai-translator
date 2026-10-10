@@ -357,6 +357,28 @@ function useDragSort(onMove) {
   return { dragIndex, insertIndex, indicatorTop, startDrag };
 }
 
+// 测试计时器（单模型测试 / 批量测试各一实例）：start 记录起点并每 500ms 刷新
+// 经过毫秒数（显示端取整数秒，无需 100ms 级精度）；stop 清除定时器并复位为 null。
+// 返回 { elapsed, start, stop }，elapsed 为 null 表示未在计时。
+function useElapsedTimer() {
+  const [elapsed, setElapsed] = useState(null);
+  const timerRef = useRef(null);
+  const start = useCallback(() => {
+    const startedAt = Date.now();
+    setElapsed(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => setElapsed(Date.now() - startedAt), 500);
+  }, []);
+  const stop = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setElapsed(null);
+  }, []);
+  return { elapsed, start, stop };
+}
+
 // 敏感字段输入框：默认密文显示（····），点击右侧眼睛按钮切换明文/密文
 function SecretInput({ className, placeholder, value, onChange }) {
   const [show, setShow] = useState(false);
@@ -456,6 +478,12 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     return n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(1)} s`;
   };
 
+  // 测试计时：点击测试后经过的毫秒数，测试中在按钮/进度行以灰色实时显示；null = 未在测试
+  const testTimer = useElapsedTimer();
+  const bulkTimer = useElapsedTimer();
+  // 计时显示：整数秒（0s 起跳动，无需 100ms 级精度）
+  const formatElapsed = (ms) => `${Math.floor(ms / 1000)}s`;
+
   // UIWebView 不支持 window.confirm，改为两段式确认：
   // 第一次点击变为「确认删除？」（3 秒内有效），再次点击才真正删除
   const handleDelete = () => {
@@ -483,6 +511,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     setTesting(true);
     setTestingModel(modelId);
     setTestResult(null);
+    testTimer.start();
     try {
       const result = await MNBridge.send("testProvider", { provider, modelId, probeReasoning: true });
       if (cancelTestRef.current) return; // 已取消：丢弃结果
@@ -504,6 +533,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
       cancelTestRef.current = false;
       setTesting(false);
       setTestingModel(null);
+      testTimer.stop();
     }
   };
 
@@ -513,6 +543,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     setTesting(false);
     setTestingModel(null);
     setTestResult(null);
+    testTimer.stop();
   };
 
   // 批量测试：逐个测试该供应商下所有已填 ID 的模型，结果实时写入 bulkResults。
@@ -523,6 +554,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     cancelBulkRef.current = false;
     setBulkTesting(true);
     setBulkResults({});
+    bulkTimer.start();
     const detected = {}; // modelId -> supportsReasoning（批量结束后一次保存）
     for (const model of targets) {
       if (cancelBulkRef.current) break; // 已取消：停止后续模型
@@ -564,6 +596,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
       });
     }
     setBulkTesting(false);
+    bulkTimer.stop();
   };
 
   // 取消批量测试：复位 UI，并停止测试剩余模型
@@ -571,6 +604,7 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
     cancelBulkRef.current = true;
     setBulkTesting(false);
     setBulkResults({});
+    bulkTimer.stop();
   };
 
   // 获取模型列表：插件侧 GET {baseURL}/models（OpenAI 兼容），再按需勾选添加
@@ -770,7 +804,12 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
                   >
                     {testing && testingModel === model.id ? (
                       <span className="btn-test-text">
-                        <span className="btn-test-idle">测试中…</span>
+                        <span className="btn-test-idle">
+                          测试中
+                          {testTimer.elapsed != null && (
+                            <span className="btn-test-timer"> {formatElapsed(testTimer.elapsed)}</span>
+                          )}
+                        </span>
                         <span className="btn-test-hover">取消测试</span>
                       </span>
                     ) : "测试"}
@@ -802,7 +841,12 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
               >
                 {bulkTesting ? (
                   <span className="btn-test-text">
-                    <span className="btn-test-idle">批量测试中…</span>
+                    <span className="btn-test-idle">
+                      批量测试中
+                      {bulkTimer.elapsed != null && (
+                        <span className="btn-test-timer"> {formatElapsed(bulkTimer.elapsed)}</span>
+                      )}
+                    </span>
                     <span className="btn-test-hover">取消测试</span>
                   </span>
                 ) : "批量测试全部"}
@@ -832,21 +876,25 @@ function ProviderCard({ provider, index, dragProps, listRef }) {
 
             {bulkTesting && (
               <p className="field-hint">
-                正在批量测试（{Object.keys(bulkResults).length}/{provider.models.filter((m) => m && String(m.id).trim()).length}）…
+                正在批量测试（{Object.keys(bulkResults).length}/{provider.models.filter((m) => m && String(m.id).trim()).length}）
+                {bulkTimer.elapsed != null && <span className="bulk-elapsed"> {formatElapsed(bulkTimer.elapsed)}</span>}
               </p>
             )}
 
-            {!bulkTesting && Object.keys(bulkResults).length > 0 && (
+            {/* 批量测试：结果逐个实时追加（每测完一个模型即显示一行）；结束后标题变为「测试完成」并出现「清除」 */}
+            {Object.keys(bulkResults).length > 0 && (
               <div className="bulk-results">
                 <div className="bulk-results-title">
                   <span>
-                    测试完成：
+                    {bulkTesting ? "测试中：" : "测试完成："}
                     {Object.values(bulkResults).filter((r) => r.ok).length} 成功 /
                     {Object.values(bulkResults).filter((r) => !r.ok).length} 失败
                   </span>
-                  <button className="btn btn-sm" onClick={() => setBulkResults({})}>
-                    清除
-                  </button>
+                  {!bulkTesting && (
+                    <button className="btn btn-sm" onClick={() => setBulkResults({})}>
+                      清除
+                    </button>
+                  )}
                 </div>
                 {provider.models
                   .filter((m) => m && String(m.id).trim() && bulkResults[String(m.id).trim()])

@@ -337,6 +337,18 @@ var MNIAIService = (function () {
     return message;
   }
 
+  // token 上限类错误判定（连通性测试用）：如 OpenAI 推理模型在 1 token 测试上限下
+  // 报 "Could not finish the message because max_tokens or model output limit was
+  // reached. Please try again with higher max_tokens."。能报出此错说明请求已通过
+  // 认证与参数校验并进入生成阶段——连通性测试要验证的都已验证；1 token 被推理
+  // 思考耗尽是模型类型决定的，并非配置问题。须与参数兼容性错误
+  //（"Unsupported parameter: 'max_tokens'..."，未进入生成阶段）区分开。
+  function isTokenLimitError(message) {
+    var m = String(message || "");
+    return /max_tokens|output limit/i.test(m) &&
+      /(could not finish|was reached|try again with higher)/i.test(m);
+  }
+
   // 网络/认证错误友好提示：
   // NSURLErrorDomain -1012（NSURLErrorUserCancelledAuthentication）= 服务器发起认证质询但被取消，
   // 常见于 API Key 缺失/错误（如 Ollama Cloud 需先在 ollama.com 创建 API Key；本地 Ollama 无需 Key）。
@@ -675,60 +687,92 @@ var MNIAIService = (function () {
     simulateTyping: simulateTyping,
 
     // 连通性测试：最小请求验证 baseURL/apiKey/model 可用。
+    // max_tokens 兼容：OpenAI 新模型（o 系列 / gpt-5、6 家族）已废弃 max_tokens，
+    // 只接受 max_completion_tokens，而 DeepSeek、Kimi 等其余厂商仍只认 max_tokens。
+    // 因此首次请求固定发 max_tokens: 1（最小消耗）；若失败且错误信息指向
+    // max_completion_tokens（OpenAI 报错文案固定含该词），换参重试一次。
+    // useMaxCompletion 记录最终生效的参数，供思考探测请求（buildProbeBody）沿用，
+    // 避免探测请求踩同一个坑。
     // probeReasoning=true 时，连通后再发一次带思考参数的请求探测模型是否支持思考，
     // 返回 supportsReasoning: true | false | null（null = 无法判断，如 429/5xx/超时）。
-    // 返回 latencyMs：整个测试过程耗时（毫秒，含探测请求；失败/超时也返回实际耗时）。
+    // 返回 latencyMs：整个测试过程耗时（毫秒，含探测/重试请求；失败/超时也返回实际耗时）。
     test: function (provider, modelId, probeReasoning) {
       var self = this;
       var t0 = Date.now();
-      var basic = {
-        model: modelId,
-        messages: [{ role: "user", content: "ping" }],
-        max_tokens: 1,
-        stream: false
+      var url = endpointOf(provider);
+      var headers = headersOf(provider);
+      var useMaxCompletion = false;
+
+      var sendBasic = function () {
+        var body = {
+          model: modelId,
+          messages: [{ role: "user", content: "ping" }],
+          stream: false
+        };
+        if (useMaxCompletion) body.max_completion_tokens = 1;
+        else body.max_tokens = 1;
+        return MNNetwork.fetch(url, {
+          method: "POST",
+          headers: headers,
+          json: body,
+          timeout: 15
+        });
       };
-      return MNNetwork.fetch(endpointOf(provider), {
-        method: "POST",
-        headers: headersOf(provider),
-        json: basic,
-        timeout: 15
-      }).then(function (res) {
-        var connectMs = Date.now() - t0;
-        if (res.status >= 200 && res.status < 300) {
-          if (!probeReasoning) {
-            return { ok: true, status: res.status, supportsReasoning: null, latencyMs: connectMs };
+
+      var handleBasic = function (res) {
+        var latencyMs = Date.now() - t0;
+        var failed = res.status < 200 || res.status >= 300;
+        var msg = failed ? extractError(res.status, res) : "";
+        if (failed) {
+          // 首次失败且错误明确指向 max_completion_tokens → 换参重试一次
+          //（useMaxCompletion 置位后不再重试，最多递归一层）
+          if (!useMaxCompletion && /max_completion_tokens/i.test(msg)) {
+            useMaxCompletion = true;
+            return sendBasic().then(handleBasic);
           }
-          // 思考能力探测：多一次带思考参数的请求
-          return MNNetwork.fetch(endpointOf(provider), {
-            method: "POST",
-            headers: headersOf(provider),
-            json: self.buildProbeBody(provider, modelId),
-            timeout: 15
-          }).then(function (res2) {
-            var totalMs = Date.now() - t0;
-            if (res2.status >= 200 && res2.status < 300) {
-              return { ok: true, status: res.status, supportsReasoning: true, latencyMs: totalMs };
-            }
-            var msg = extractError(res2.status, res2);
-            var detected = self.detectReasoningFromError(msg);
-            return { ok: true, status: res.status, supportsReasoning: detected, probeMessage: msg, latencyMs: totalMs };
-          });
+          // token 上限错误 → 连通成功：请求已通过认证与参数校验并进入生成阶段
+          //（见 isTokenLimitError 注释），与真正的连通失败区分开
+          if (!isTokenLimitError(msg)) {
+            return { ok: false, status: res.status, message: msg, latencyMs: latencyMs };
+          }
         }
-        return { ok: false, status: res.status, message: extractError(res.status, res), latencyMs: connectMs };
-      }).catch(function (err) {
+        if (!probeReasoning) {
+          return { ok: true, status: res.status, supportsReasoning: null, latencyMs: latencyMs };
+        }
+        // 思考能力探测：多一次带思考参数的请求（沿用 basic 阶段确认的 token 参数）
+        return MNNetwork.fetch(url, {
+          method: "POST",
+          headers: headers,
+          json: self.buildProbeBody(provider, modelId, useMaxCompletion),
+          timeout: 15
+        }).then(function (res2) {
+          var totalMs = Date.now() - t0;
+          if (res2.status >= 200 && res2.status < 300) {
+            return { ok: true, status: res.status, supportsReasoning: true, latencyMs: totalMs };
+          }
+          var msg2 = extractError(res2.status, res2);
+          var detected = self.detectReasoningFromError(msg2);
+          return { ok: true, status: res.status, supportsReasoning: detected, probeMessage: msg2, latencyMs: totalMs };
+        });
+      };
+
+      return sendBasic().then(handleBasic).catch(function (err) {
         // 网络层错误（含 -1012 认证被取消）→ 转为可读结果，避免设置页显示裸错误
         return { ok: false, status: 0, message: errorText(err), latencyMs: Date.now() - t0 };
       });
     },
 
     // 思考能力探测请求体（按厂商风格选择参数；与 buildReasoningBody 保持同一套规则）
-    buildProbeBody: function (provider, modelId) {
+    // useMaxCompletion=true 时改发 max_completion_tokens: 1（OpenAI 新模型），
+    // 该值由 test() 在 basic 阶段用实际请求确认后传入，不做 ID 猜测。
+    buildProbeBody: function (provider, modelId, useMaxCompletion) {
       var body = {
         model: modelId,
         messages: [{ role: "user", content: "ping" }],
-        max_tokens: 1,
         stream: false
       };
+      if (useMaxCompletion) body.max_completion_tokens = 1;
+      else body.max_tokens = 1;
       // 用 high 作为探测强度（最强信号，能区分支持/不支持）
       // kimi-k3 + high → reasoning_effort: high；kimi-k2.7-code → 始终 enabled；其它分支见 buildReasoningBody
       var probeRoute = { reasoningEffort: "high", temperature: 0 };
@@ -736,9 +780,22 @@ var MNIAIService = (function () {
       return body;
     },
 
-    // 从探测请求的错误信息判断是否「不支持思考参数」；无法判断返回 null
+    // 从探测请求的错误信息判断是否「不支持思考参数」；无法判断返回 null。
+    // 推理模型在 1 token 上限下的表现：支持思考 → 思考参数通过校验、进入生成阶段，
+    // 报 token 上限错误 → true；不支持 → 参数校验阶段即被拒（如 unsupported
+    // reasoning_effort）→ false；token 参数兼容性错误（如要求 max_completion_tokens，
+    // 同样未进入生成阶段）与思考能力无关 → null。
     detectReasoningFromError: function (message) {
       var m = String(message || "").toLowerCase();
+      // token 上限错误：探测请求（含思考参数）已通过参数校验并进入生成阶段，
+      // 1 token 被推理思考耗尽 → 思考参数被接受
+      if (isTokenLimitError(m)) {
+        return true;
+      }
+      // token 参数兼容性错误先排除，避免其 "not supported" 字样被下面的正则误判为 false
+      if (/max_completion_tokens|max_tokens/.test(m)) {
+        return null;
+      }
       if (/does not support|not support|not supported|unsupported|unknown parameter|unknown field|invalid parameter|invalid field|is not supported|enable_thinking|reasoning_effort|'thinking'|thinking.*(not|invalid|unknown)/.test(m)) {
         return false;
       }
