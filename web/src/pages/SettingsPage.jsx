@@ -359,6 +359,8 @@ function useDragSort(onMove) {
 
 // 测试计时器（单模型测试 / 批量测试各一实例）：start 记录起点并每 500ms 刷新
 // 经过毫秒数（显示端取整数秒，无需 100ms 级精度）；stop 清除定时器并复位为 null。
+// 组件卸载时自动 stop：测试进行中卡片被删除（或 bridge 调用永不返回）时，
+// 避免 interval 持续空转并钉住组件实例导致内存泄漏。
 // 返回 { elapsed, start, stop }，elapsed 为 null 表示未在计时。
 function useElapsedTimer() {
   const [elapsed, setElapsed] = useState(null);
@@ -376,6 +378,8 @@ function useElapsedTimer() {
     }
     setElapsed(null);
   }, []);
+  // 卸载清理：stop 为 useCallback([]) 稳定引用；卸载后 setElapsed 为无害 no-op
+  useEffect(() => () => stop(), [stop]);
   return { elapsed, start, stop };
 }
 
